@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "346096042374",
+    "project_id": "roadsafe-ai-c6800",
+    "storage_bucket": "roadsafe-ai-c6800.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:346096042374:android:34367af7745aa707f16c07",
+        "android_client_info": {
+          "package_name": "com.example.road_safe_ai"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCSgsNgjscEE7iIIZeNDiZ8k-kfiUJBB5k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
