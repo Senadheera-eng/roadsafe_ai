@@ -575,7 +575,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
-                title: 'Smart Analytics',
+                title: 'Analytics',
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,

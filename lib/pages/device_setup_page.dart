@@ -464,108 +464,114 @@ class _DeviceSetupPageState extends State<DeviceSetupPage>
   Widget _buildWiFiConfigurationStep() {
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildStepHeader(
-            icon: Icons.wifi_rounded,
-            title: 'Wi-Fi Setup',
-            subtitle: 'Connect device to your network',
-          ),
-
-          const SizedBox(height: 24),
-
-          GlassCard(
-            padding: const EdgeInsets.all(24),
-            borderRadius: 20,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Network Configuration',
-                  style: AppTextStyles.titleLarge.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                ModernTextField(
-                  controller: _wifiNameController,
-                  label: 'Wi-Fi Network Name',
-                  hint: 'Enter your Wi-Fi SSID',
-                  prefixIcon: Icons.wifi_rounded,
-                ),
-                const SizedBox(height: 16),
-                ModernTextField(
-                  controller: _wifiPasswordController,
-                  label: 'Wi-Fi Password',
-                  hint: 'Enter your Wi-Fi password',
-                  prefixIcon: Icons.lock_outline_rounded,
-                  isPassword: true,
-                ),
-                const SizedBox(height: 16),
-                ModernTextField(
-                  controller: _deviceNameController,
-                  label: 'Device Name',
-                  hint: 'Give your device a name',
-                  prefixIcon: Icons.devices_rounded,
-                ),
-                const SizedBox(height: 24),
-                GradientButton(
-                  onPressed: _connectToWiFi,
-                  text: 'Connect to Wi-Fi',
-                  isLoading: _isConnecting,
-                  gradientColors: AppColors.primaryGradient,
-                  icon: Icons.wifi_rounded,
-                ),
-              ],
+      child: SingleChildScrollView(
+        physics: const BouncingScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildStepHeader(
+              icon: Icons.wifi_rounded,
+              title: 'Wi-Fi Setup',
+              subtitle: 'Connect device to your network',
             ),
-          ),
 
-          const SizedBox(height: 16),
+            const SizedBox(height: 24),
 
-          // Pro Tips
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppColors.info.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: AppColors.info.withOpacity(0.3),
-                width: 1,
+            GlassCard(
+              padding: const EdgeInsets.all(24),
+              borderRadius: 20,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Network Configuration',
+                    style: AppTextStyles.titleLarge.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  ModernTextField(
+                    controller: _wifiNameController,
+                    label: 'Wi-Fi Network Name',
+                    hint: 'Enter your Wi-Fi SSID',
+                    prefixIcon: Icons.wifi_rounded,
+                  ),
+                  const SizedBox(height: 16),
+                  ModernTextField(
+                    controller: _wifiPasswordController,
+                    label: 'Wi-Fi Password',
+                    hint: 'Enter your Wi-Fi password',
+                    prefixIcon: Icons.lock_outline_rounded,
+                    isPassword: true,
+                  ),
+                  const SizedBox(height: 16),
+                  ModernTextField(
+                    controller: _deviceNameController,
+                    label: 'Device Name',
+                    hint: 'Give your device a name',
+                    prefixIcon: Icons.devices_rounded,
+                  ),
+                  const SizedBox(height: 16),
+                  GradientButton(
+                    onPressed: _connectToWiFi,
+                    text: 'Connect to Wi-Fi',
+                    isLoading: _isConnecting,
+                    gradientColors: AppColors.primaryGradient,
+                    icon: Icons.wifi_rounded,
+                  ),
+                ],
               ),
             ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      Icons.tips_and_updates_rounded,
-                      color: AppColors.info,
-                      size: 16,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      'Connection Tips',
-                      style: AppTextStyles.labelMedium.copyWith(
+
+            const SizedBox(height: 16),
+
+            // Pro Tips
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.info.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppColors.info.withOpacity(0.3),
+                  width: 1,
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.tips_and_updates_rounded,
                         color: AppColors.info,
-                        fontWeight: FontWeight.w600,
+                        size: 16,
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  '• Use your phone\'s hotspot if car Wi-Fi isn\'t available\n• Keep the device within 10 meters of the router\n• Use a 2.4GHz network for better compatibility',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.info,
-                    height: 1.4,
+                      const SizedBox(width: 8),
+                      Text(
+                        'Connection Tips',
+                        style: AppTextStyles.labelMedium.copyWith(
+                          color: AppColors.info,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
                   ),
-                ),
-              ],
+                  const SizedBox(height: 8),
+                  Text(
+                    '• Use your phone\'s hotspot if car Wi-Fi isn\'t available\n• Keep the device within 10 meters of the router\n• Use a 2.4GHz network for better compatibility',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.info,
+                      height: 1.4,
+                    ),
+                  ),
+                ],
+              ),
             ),
-          ),
-        ],
+
+            // Add some bottom padding for better scrolling experience
+            const SizedBox(height: 20),
+          ],
+        ),
       ),
     );
   }
@@ -573,133 +579,136 @@ class _DeviceSetupPageState extends State<DeviceSetupPage>
   Widget _buildCameraPositioningStep() {
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildStepHeader(
-            icon: Icons.camera_alt_rounded,
-            title: 'Position Camera',
-            subtitle: 'Optimal placement for detection',
-          ),
+      child: SingleChildScrollView(
+        physics: BouncingScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildStepHeader(
+              icon: Icons.camera_alt_rounded,
+              title: 'Position Camera',
+              subtitle: 'Optimal placement for detection',
+            ),
 
-          const SizedBox(height: 24),
+            const SizedBox(height: 24),
 
-          // Camera Preview Placeholder
-          GradientCard(
-            gradientColors: AppColors.darkGradient,
-            padding: const EdgeInsets.all(24),
-            borderRadius: 20,
-            child: Column(
-              children: [
-                Container(
-                  width: double.infinity,
-                  height: 200,
-                  decoration: BoxDecoration(
-                    color: Colors.black.withOpacity(0.3),
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: Colors.white.withOpacity(0.3),
-                      width: 2,
+            // Camera Preview Placeholder
+            GradientCard(
+              gradientColors: AppColors.darkGradient,
+              padding: const EdgeInsets.all(24),
+              borderRadius: 20,
+              child: Column(
+                children: [
+                  Container(
+                    width: double.infinity,
+                    height: 200,
+                    decoration: BoxDecoration(
+                      color: Colors.black.withOpacity(0.3),
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(
+                        color: Colors.white.withOpacity(0.3),
+                        width: 2,
+                      ),
+                    ),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.camera_alt_rounded,
+                          color: Colors.white.withOpacity(0.7),
+                          size: 48,
+                        ),
+                        const SizedBox(height: 12),
+                        Text(
+                          'Camera Preview',
+                          style: AppTextStyles.titleMedium.copyWith(
+                            color: Colors.white.withOpacity(0.9),
+                          ),
+                        ),
+                        Text(
+                          'Live feed will appear here',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: Colors.white.withOpacity(0.7),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+
+                  const SizedBox(height: 20),
+
+                  // Position Guidelines
+                  Row(
                     children: [
                       Icon(
-                        Icons.camera_alt_rounded,
-                        color: Colors.white.withOpacity(0.7),
-                        size: 48,
+                        Icons.straighten_rounded,
+                        color: Colors.white,
+                        size: 20,
                       ),
-                      const SizedBox(height: 12),
-                      Text(
-                        'Camera Preview',
-                        style: AppTextStyles.titleMedium.copyWith(
-                          color: Colors.white.withOpacity(0.9),
-                        ),
-                      ),
-                      Text(
-                        'Live feed will appear here',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: Colors.white.withOpacity(0.7),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Distance: 60-80cm from your face',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: Colors.white,
+                          ),
                         ),
                       ),
                     ],
                   ),
-                ),
-
-                const SizedBox(height: 20),
-
-                // Position Guidelines
-                Row(
-                  children: [
-                    Icon(
-                      Icons.straighten_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Distance: 60-80cm from your face',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: Colors.white,
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.height_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Height: At eye level',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.height_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Height: At eye level',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: Colors.white,
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      Icon(
+                        Icons.center_focus_strong_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Text(
+                          'Angle: Pointing directly at driver seat',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            color: Colors.white,
+                          ),
                         ),
                       ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Icon(
-                      Icons.center_focus_strong_rounded,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        'Angle: Pointing directly at driver seat',
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+                    ],
+                  ),
+                ],
+              ),
             ),
-          ),
 
-          const SizedBox(height: 20),
+            const SizedBox(height: 20),
 
-          GradientButton(
-            onPressed: _testCameraPosition,
-            text: _isTestingCamera ? 'Testing...' : 'Test Camera Position',
-            isLoading: _isTestingCamera,
-            gradientColors: AppColors.secondaryGradient,
-            icon: Icons.visibility_rounded,
-          ),
-        ],
+            GradientButton(
+              onPressed: _testCameraPosition,
+              text: _isTestingCamera ? 'Testing...' : 'Test Camera Position',
+              isLoading: _isTestingCamera,
+              gradientColors: AppColors.secondaryGradient,
+              icon: Icons.visibility_rounded,
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -707,58 +716,62 @@ class _DeviceSetupPageState extends State<DeviceSetupPage>
   Widget _buildCalibrationStep() {
     return Padding(
       padding: const EdgeInsets.all(20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildStepHeader(
-            icon: Icons.tune_rounded,
-            title: 'System Calibration',
-            subtitle: 'Optimize for your facial features',
-          ),
-          const SizedBox(height: 24),
-          GlassCard(
-            padding: const EdgeInsets.all(24),
-            borderRadius: 20,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  'Calibration Process',
-                  style: AppTextStyles.titleLarge.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-                const SizedBox(height: 16),
-                _buildCalibrationInstructionStep(
-                  '1',
-                  'Sit in Normal Driving Position',
-                  'Adjust your seat and mirrors as you normally would',
-                  Icons.airline_seat_legroom_normal_rounded,
-                ),
-                _buildCalibrationInstructionStep(
-                  '2',
-                  'Look Straight Ahead',
-                  'Keep your eyes focused on the road ahead',
-                  Icons.remove_red_eye_rounded,
-                ),
-                _buildCalibrationInstructionStep(
-                  '3',
-                  'Stay Still for 10 Seconds',
-                  'The system will learn your facial features',
-                  Icons.timer_rounded,
-                ),
-                const SizedBox(height: 24),
-                GradientButton(
-                  onPressed: _startCalibration,
-                  text: _isCalibrating ? 'Calibrating...' : 'Start Calibration',
-                  isLoading: _isCalibrating,
-                  gradientColors: AppColors.successGradient,
-                  icon: Icons.psychology_rounded,
-                ),
-              ],
+      child: SingleChildScrollView(
+        physics: BouncingScrollPhysics(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildStepHeader(
+              icon: Icons.tune_rounded,
+              title: 'System Calibration',
+              subtitle: 'Optimize for your facial features',
             ),
-          ),
-        ],
+            const SizedBox(height: 24),
+            GlassCard(
+              padding: const EdgeInsets.all(24),
+              borderRadius: 20,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'Calibration Process',
+                    style: AppTextStyles.titleLarge.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 16),
+                  _buildCalibrationInstructionStep(
+                    '1',
+                    'Sit in Normal Driving Position',
+                    'Adjust your seat and mirrors as you normally would',
+                    Icons.airline_seat_legroom_normal_rounded,
+                  ),
+                  _buildCalibrationInstructionStep(
+                    '2',
+                    'Look Straight Ahead',
+                    'Keep your eyes focused on the road ahead',
+                    Icons.remove_red_eye_rounded,
+                  ),
+                  _buildCalibrationInstructionStep(
+                    '3',
+                    'Stay Still for 10 Seconds',
+                    'The system will learn your facial features',
+                    Icons.timer_rounded,
+                  ),
+                  const SizedBox(height: 24),
+                  GradientButton(
+                    onPressed: _startCalibration,
+                    text:
+                        _isCalibrating ? 'Calibrating...' : 'Start Calibration',
+                    isLoading: _isCalibrating,
+                    gradientColors: AppColors.successGradient,
+                    icon: Icons.psychology_rounded,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1210,7 +1223,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage>
               },
             ),
 
-            const SizedBox(height: 16),
+            const SizedBox(height: 8),
 
             Text(
               'Calibration in progress...',
