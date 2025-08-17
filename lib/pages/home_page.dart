@@ -4,6 +4,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
+import 'safety_guide_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -573,7 +574,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
-                title: 'Smart Analytics',
+                title: 'Analytics',
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
@@ -593,11 +594,35 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Learn optimal usage patterns',
                 color: AppColors.guidelines,
                 gradientColors: AppColors.secondaryGradient,
-                onTap: () => _showFeatureNotification('Safety Guide'),
+                onTap: () => _navigateToSafetyGuide(),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _navigateToSafetyGuide() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const SafetyGuidePage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
