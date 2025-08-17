@@ -5,6 +5,7 @@ import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
 import 'safety_guide_page.dart';
+import 'device_setup_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -574,7 +575,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
-                title: 'Analytics',
+                title: 'Smart Analytics',
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
@@ -586,7 +587,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Configure your ESP32 device',
                 color: AppColors.deviceSetup,
                 gradientColors: AppColors.accentGradient,
-                onTap: () => _showFeatureNotification('Device Setup'),
+                onTap: () => _navigateToDeviceSetup(),
               ),
               FeatureCard(
                 icon: Icons.help_outline_rounded,
@@ -609,6 +610,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const SafetyGuidePage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  void _navigateToDeviceSetup() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const DeviceSetupPage(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(1.0, 0.0);
           const end = Offset.zero;
@@ -667,6 +692,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  // ... (rest of the methods remain the same as before)
   void _showNotifications() {
     showModalBottomSheet(
       context: context,
