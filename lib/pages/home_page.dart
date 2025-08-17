@@ -3,6 +3,9 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
+import '../widgets/glass_card.dart';
+import 'safety_guide_page.dart';
+import 'device_setup_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -85,51 +88,150 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       backgroundColor: AppColors.background,
       body: CustomScrollView(
         slivers: [
-          // App Bar
+          // Beautiful Curved App Bar that scrolls
           SliverAppBar(
-            expandedHeight: 120,
+            expandedHeight: 180,
             floating: false,
             pinned: true,
             elevation: 0,
-            backgroundColor: AppColors.primary,
+            backgroundColor: Colors.transparent,
+            automaticallyImplyLeading: false,
             flexibleSpace: FlexibleSpaceBar(
-              background: Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: AppColors.primaryGradient,
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
+              background: Stack(
+                children: [
+                  // Gradient Background
+                  Container(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: AppColors.oceanGradient,
+                        begin: Alignment.topLeft,
+                        end: Alignment.bottomRight,
+                      ),
+                    ),
                   ),
-                ),
-              ),
-              titlePadding: const EdgeInsets.only(left: 16, bottom: 16),
-              title: Text(
-                'Road Safe AI',
-                style: AppTextStyles.headlineMedium.copyWith(
-                  color: AppColors.onPrimary,
-                ),
+
+                  // Curved Bottom Shape
+                  Positioned(
+                    bottom: -1,
+                    left: 0,
+                    right: 0,
+                    child: Container(
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: AppColors.background,
+                        borderRadius: const BorderRadius.only(
+                          topLeft: Radius.circular(40),
+                          topRight: Radius.circular(40),
+                        ),
+                      ),
+                    ),
+                  ),
+
+                  // App Bar Content
+                  SafeArea(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const SizedBox(height: 16),
+
+                          // Top Row with Logo and Actions
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              // Logo and Title
+                              Row(
+                                children: [
+                                  Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      color: Colors.white.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(14),
+                                      border: Border.all(
+                                        color: Colors.white.withOpacity(0.3),
+                                        width: 1,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.shield_rounded,
+                                      color: Colors.white,
+                                      size: 24,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 12),
+                                  Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'Road Safe AI',
+                                        style: AppTextStyles.headlineMedium
+                                            .copyWith(
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          height: 1.1,
+                                        ),
+                                      ),
+                                      Text(
+                                        'Driver Safety System',
+                                        style: AppTextStyles.bodySmall.copyWith(
+                                          color: Colors.white.withOpacity(0.8),
+                                          height: 1.0,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ],
+                              ),
+
+                              // Action Buttons
+                              Row(
+                                children: [
+                                  // Notification Button
+                                  _buildActionButton(
+                                    icon: Icons.notifications_rounded,
+                                    onTap: () => _showNotifications(),
+                                    showBadge: true,
+                                    badgeCount: 3,
+                                  ),
+                                  const SizedBox(width: 12),
+
+                                  // Profile Button
+                                  _buildActionButton(
+                                    icon: Icons.person_rounded,
+                                    onTap: () => _showProfileMenu(),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+
+                          const SizedBox(height: 24),
+
+                          // Welcome Message
+                          Text(
+                            'Welcome back, $userName!',
+                            style: AppTextStyles.titleLarge.copyWith(
+                              color: Colors.white.withOpacity(0.9),
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            'Your safety companion is ready',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color: Colors.white.withOpacity(0.7),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
-            actions: [
-              Container(
-                margin: const EdgeInsets.only(right: 8),
-                child: IconButton(
-                  icon: Container(
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.2),
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    child: const Icon(
-                      Icons.logout_rounded,
-                      color: AppColors.onPrimary,
-                      size: 20,
-                    ),
-                  ),
-                  onPressed: () => _showLogoutDialog(context),
-                ),
-              ),
-            ],
           ),
 
           // Welcome Section
@@ -183,98 +285,155 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  Widget _buildWelcomeSection(String userName) {
-    return Container(
-      margin: const EdgeInsets.all(20),
-      padding: const EdgeInsets.all(24),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: AppColors.secondaryGradient,
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.secondary.withOpacity(0.3),
-            offset: const Offset(0, 8),
-            blurRadius: 24,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildActionButton({
+    required IconData icon,
+    required VoidCallback onTap,
+    bool showBadge = false,
+    int badgeCount = 0,
+  }) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Stack(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.2),
-                  borderRadius: BorderRadius.circular(16),
-                ),
-                child: const Icon(
-                  Icons.waving_hand_rounded,
-                  color: Colors.white,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Welcome back!',
-                      style: AppTextStyles.headlineSmall.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    Text(
-                      userName,
-                      style: AppTextStyles.titleMedium.copyWith(
-                        color: Colors.white.withOpacity(0.9),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
           Container(
-            padding: const EdgeInsets.all(16),
+            width: 44,
+            height: 44,
             decoration: BoxDecoration(
-              color: Colors.white.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(16),
+              color: Colors.white.withOpacity(0.2),
+              borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: Colors.white.withOpacity(0.2),
+                color: Colors.white.withOpacity(0.3),
                 width: 1,
               ),
             ),
-            child: Row(
-              children: [
-                const Icon(
-                  Icons.security_rounded,
-                  color: Colors.white,
-                  size: 20,
+            child: Icon(
+              icon,
+              color: Colors.white,
+              size: 22,
+            ),
+          ),
+
+          // Badge
+          if (showBadge && badgeCount > 0)
+            Positioned(
+              right: 6,
+              top: 6,
+              child: Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  color: AppColors.error,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: Colors.white,
+                    width: 1.5,
+                  ),
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Text(
-                    'Your road safety companion is ready to protect you!',
-                    style: AppTextStyles.bodyMedium.copyWith(
-                      color: Colors.white.withOpacity(0.9),
+                constraints: const BoxConstraints(
+                  minWidth: 16,
+                  minHeight: 16,
+                ),
+                child: Text(
+                  badgeCount > 99 ? '99+' : badgeCount.toString(),
+                  style: AppTextStyles.labelSmall.copyWith(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildWelcomeSection(String userName) {
+    return Container(
+      margin: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+      child: GradientCard(
+        gradientColors: AppColors.sunsetGradient,
+        padding: const EdgeInsets.all(24),
+        borderRadius: 24,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Container(
+                  width: 56,
+                  height: 56,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.2),
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: Colors.white.withOpacity(0.3),
+                      width: 1,
                     ),
+                  ),
+                  child: const Icon(
+                    Icons.psychology_rounded,
+                    color: Colors.white,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: 16),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'AI Protection Active',
+                        style: AppTextStyles.headlineSmall.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      Text(
+                        'Monitoring your alertness in real-time',
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: Colors.white.withOpacity(0.9),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
               ],
             ),
-          ),
-        ],
+            const SizedBox(height: 20),
+            GlassCard(
+              padding: const EdgeInsets.all(20),
+              borderRadius: 16,
+              opacity: 0.2,
+              child: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.2),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: const Icon(
+                      Icons.security_rounded,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Text(
+                      'ESP32 device connected and monitoring your safety',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w500,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -286,8 +445,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            'Quick Stats',
-            style: AppTextStyles.headlineSmall,
+            'Today\'s Safety Metrics',
+            style: AppTextStyles.headlineSmall.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 16),
           Row(
@@ -295,9 +456,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               Expanded(
                 child: _buildStatCard(
                   icon: Icons.timer_rounded,
-                  value: '0h',
+                  value: '2.5h',
                   label: 'Drive Time',
                   color: AppColors.info,
+                  gradientColors: [AppColors.info, AppColors.secondary],
                 ),
               ),
               const SizedBox(width: 12),
@@ -305,17 +467,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 child: _buildStatCard(
                   icon: Icons.warning_rounded,
                   value: '0',
-                  label: 'Alerts Today',
+                  label: 'Alerts',
                   color: AppColors.warning,
+                  gradientColors: [AppColors.warning, AppColors.accent],
                 ),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: _buildStatCard(
                   icon: Icons.trending_up_rounded,
-                  value: '100%',
+                  value: '98%',
                   label: 'Safety Score',
                   color: AppColors.success,
+                  gradientColors: [AppColors.success, AppColors.quaternary],
                 ),
               ),
             ],
@@ -330,35 +494,48 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     required String value,
     required String label,
     required Color color,
+    List<Color>? gradientColors,
   }) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: AppColors.cardShadow,
-            offset: const Offset(0, 2),
-            blurRadius: 8,
-            spreadRadius: 0,
-          ),
-        ],
-      ),
+    return GlassCard(
+      padding: const EdgeInsets.all(20),
+      borderRadius: 20,
+      opacity: 0.8,
       child: Column(
         children: [
-          Icon(icon, color: color, size: 24),
-          const SizedBox(height: 8),
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: gradientColors ?? [color, color.withOpacity(0.7)],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withOpacity(0.3),
+                  offset: const Offset(0, 4),
+                  blurRadius: 12,
+                ),
+              ],
+            ),
+            child: Icon(icon, color: Colors.white, size: 24),
+          ),
+          const SizedBox(height: 12),
           Text(
             value,
-            style: AppTextStyles.titleLarge.copyWith(
+            style: AppTextStyles.headlineSmall.copyWith(
               fontWeight: FontWeight.bold,
               color: color,
             ),
           ),
+          const SizedBox(height: 4),
           Text(
             label,
-            style: AppTextStyles.bodySmall,
+            style: AppTextStyles.bodySmall.copyWith(
+              fontWeight: FontWeight.w500,
+            ),
             textAlign: TextAlign.center,
           ),
         ],
@@ -374,8 +551,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         children: [
           const SizedBox(height: 8),
           Text(
-            'Features',
-            style: AppTextStyles.headlineSmall,
+            'Safety Features',
+            style: AppTextStyles.headlineSmall.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
           ),
           const SizedBox(height: 16),
           GridView.count(
@@ -389,46 +568,34 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               FeatureCard(
                 icon: Icons.videocam_rounded,
                 title: 'Live Camera',
-                subtitle: 'Monitor ESP32 feed in real-time',
+                subtitle: 'Real-time ESP32 monitoring',
                 color: AppColors.cameraFeed,
-                gradientColors: AppColors.secondaryGradient,
-                onTap: () {
-                  // TODO: Navigate to camera feed page
-                  _showFeatureNotification('Live Camera');
-                },
+                gradientColors: AppColors.primaryGradient,
+                onTap: () => _showFeatureNotification('Live Camera'),
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
                 title: 'Analytics',
-                subtitle: 'View drowsiness behavior data',
+                subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
-                gradientColors: AppColors.primaryGradient,
-                onTap: () {
-                  // TODO: Navigate to analytics page
-                  _showFeatureNotification('Analytics');
-                },
+                gradientColors: AppColors.successGradient,
+                onTap: () => _showFeatureNotification('Smart Analytics'),
               ),
               FeatureCard(
                 icon: Icons.settings_rounded,
                 title: 'Device Setup',
-                subtitle: 'Configure ESP32 connection',
+                subtitle: 'Configure your ESP32 device',
                 color: AppColors.deviceSetup,
                 gradientColors: AppColors.accentGradient,
-                onTap: () {
-                  // TODO: Navigate to setup page
-                  _showFeatureNotification('Device Setup');
-                },
+                onTap: () => _navigateToDeviceSetup(),
               ),
               FeatureCard(
                 icon: Icons.help_outline_rounded,
-                title: 'Guidelines',
-                subtitle: 'Learn how to use the system',
+                title: 'Safety Guide',
+                subtitle: 'Learn optimal usage patterns',
                 color: AppColors.guidelines,
-                gradientColors: AppColors.darkGradient,
-                onTap: () {
-                  // TODO: Navigate to guidelines page
-                  _showFeatureNotification('Guidelines');
-                },
+                gradientColors: AppColors.secondaryGradient,
+                onTap: () => _navigateToSafetyGuide(),
               ),
             ],
           ),
@@ -437,67 +604,333 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  void _showFeatureNotification(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature feature coming soon!'),
-        backgroundColor: AppColors.info,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
-        margin: const EdgeInsets.all(16),
+  void _navigateToSafetyGuide() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const SafetyGuidePage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
 
-  void _showLogoutDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (BuildContext context) {
-        return AlertDialog(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
-          title: Text(
-            'Logout',
-            style: AppTextStyles.headlineSmall,
-          ),
-          content: Text(
-            'Are you sure you want to logout?',
-            style: AppTextStyles.bodyMedium,
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: Text(
-                'Cancel',
-                style: AppTextStyles.labelLarge.copyWith(
-                  color: AppColors.textSecondary,
-                ),
+  void _navigateToDeviceSetup() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const DeviceSetupPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  void _showFeatureNotification(String feature) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.primary,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(
+                Icons.rocket_launch_rounded,
+                color: Colors.white,
+                size: 16,
               ),
             ),
-            ElevatedButton(
-              onPressed: () async {
-                Navigator.of(context).pop();
-                await FirebaseAuth.instance.signOut();
-              },
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.error,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+            const SizedBox(width: 12),
+            Expanded(
               child: Text(
-                'Logout',
-                style: AppTextStyles.labelLarge.copyWith(
+                '$feature feature launching soon!',
+                style: AppTextStyles.bodyMedium.copyWith(
                   color: Colors.white,
+                  fontWeight: FontWeight.w500,
                 ),
               ),
             ),
           ],
-        );
-      },
+        ),
+        backgroundColor: AppColors.primary,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        margin: const EdgeInsets.all(16),
+        elevation: 8,
+      ),
+    );
+  }
+
+  // ... (rest of the methods remain the same as before)
+  void _showNotifications() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      isScrollControlled: true,
+      builder: (context) => DraggableScrollableSheet(
+        initialChildSize: 0.6,
+        maxChildSize: 0.9,
+        minChildSize: 0.3,
+        builder: (context, scrollController) => Container(
+          decoration: const BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.vertical(
+              top: Radius.circular(24),
+            ),
+          ),
+          child: Column(
+            children: [
+              Container(
+                margin: const EdgeInsets.only(top: 12),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: AppColors.textHint,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Row(
+                  children: [
+                    Text(
+                      'Notifications',
+                      style: AppTextStyles.headlineSmall.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const Spacer(),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 6,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.error.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      child: Text(
+                        '3 new',
+                        style: AppTextStyles.labelSmall.copyWith(
+                          color: AppColors.error,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: ListView(
+                  controller: scrollController,
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  children: [
+                    _buildNotificationItem(
+                      icon: Icons.check_circle_rounded,
+                      title: 'System Ready',
+                      subtitle: 'ESP32 device connected successfully',
+                      time: '2 min ago',
+                      color: AppColors.success,
+                    ),
+                    _buildNotificationItem(
+                      icon: Icons.update_rounded,
+                      title: 'Software Update',
+                      subtitle: 'New features available for download',
+                      time: '1 hour ago',
+                      color: AppColors.info,
+                    ),
+                    _buildNotificationItem(
+                      icon: Icons.tips_and_updates_rounded,
+                      title: 'Safety Tip',
+                      subtitle:
+                          'Take breaks every 2 hours for optimal alertness',
+                      time: '3 hours ago',
+                      color: AppColors.warning,
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _showProfileMenu() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.transparent,
+      builder: (context) => Container(
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(24),
+          ),
+        ),
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              width: 40,
+              height: 4,
+              decoration: BoxDecoration(
+                color: AppColors.textHint,
+                borderRadius: BorderRadius.circular(2),
+              ),
+            ),
+            const SizedBox(height: 24),
+            _buildMenuTile(
+              icon: Icons.person_rounded,
+              title: 'Profile',
+              onTap: () => Navigator.pop(context),
+            ),
+            _buildMenuTile(
+              icon: Icons.settings_rounded,
+              title: 'Settings',
+              onTap: () => Navigator.pop(context),
+            ),
+            _buildMenuTile(
+              icon: Icons.help_outline_rounded,
+              title: 'Help & Support',
+              onTap: () => Navigator.pop(context),
+            ),
+            _buildMenuTile(
+              icon: Icons.logout_rounded,
+              title: 'Logout',
+              color: AppColors.error,
+              onTap: () async {
+                Navigator.pop(context);
+                await FirebaseAuth.instance.signOut();
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMenuTile({
+    required IconData icon,
+    required String title,
+    required VoidCallback onTap,
+    Color? color,
+  }) {
+    final itemColor = color ?? AppColors.textPrimary;
+
+    return ListTile(
+      leading: Icon(icon, color: itemColor),
+      title: Text(
+        title,
+        style: AppTextStyles.bodyMedium.copyWith(
+          color: itemColor,
+          fontWeight: FontWeight.w500,
+        ),
+      ),
+      onTap: onTap,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+    );
+  }
+
+  Widget _buildNotificationItem({
+    required IconData icon,
+    required String title,
+    required String subtitle,
+    required String time,
+    required Color color,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(
+          color: color.withOpacity(0.2),
+          width: 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: color.withOpacity(0.1),
+            offset: const Offset(0, 2),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 48,
+            height: 48,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+            ),
+            child: Icon(icon, color: color, size: 24),
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: AppTextStyles.titleMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  subtitle,
+                  style: AppTextStyles.bodySmall,
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  time,
+                  style: AppTextStyles.labelSmall.copyWith(
+                    color: AppColors.textHint,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 }
