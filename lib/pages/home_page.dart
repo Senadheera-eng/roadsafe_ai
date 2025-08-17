@@ -4,6 +4,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
+import 'settings_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -764,12 +765,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             _buildMenuTile(
               icon: Icons.person_rounded,
               title: 'Profile',
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                Navigator.pop(context); // closes drawer first
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsPage()),
+                );
+              },
             ),
             _buildMenuTile(
               icon: Icons.settings_rounded,
               title: 'Settings',
-              onTap: () => Navigator.pop(context),
+              onTap: () {
+                Navigator.pop(context);
+                Navigator.pushReplacement(
+                  context,
+                  MaterialPageRoute(builder: (context) => const SettingsPage()),
+                );
+              },
             ),
             _buildMenuTile(
               icon: Icons.help_outline_rounded,
