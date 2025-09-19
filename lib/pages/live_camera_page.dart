@@ -156,61 +156,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     }
   }
 
-  Future<void> _debugESP32Connection() async {
-    const testIP = '10.19.80.42';
-
-    _showMessage('Testing connection to $testIP...', AppColors.info);
-
-    try {
-      // Test 1: Basic HTTP GET
-      print('Debug: Testing HTTP GET to $testIP');
-      final response = await http.get(
-        Uri.parse('http://$testIP/'),
-        headers: {'Connection': 'close'},
-      ).timeout(Duration(seconds: 10));
-
-      print('Debug: HTTP Response Status: ${response.statusCode}');
-      print('Debug: Response Headers: ${response.headers}');
-      print('Debug: Response Body Length: ${response.body.length}');
-      print(
-          'Debug: Response Body Preview: ${response.body.substring(0, response.body.length > 200 ? 200 : response.body.length)}');
-
-      if (response.statusCode == 200) {
-        _showMessage('HTTP connection successful!', AppColors.success);
-
-        // Test 2: Check stream endpoint
-        try {
-          final streamResponse = await http
-              .head(
-                Uri.parse('http://$testIP/stream'),
-              )
-              .timeout(Duration(seconds: 5));
-
-          print('Debug: Stream endpoint status: ${streamResponse.statusCode}');
-          _showMessage('Stream endpoint accessible!', AppColors.success);
-
-          // Manual device creation since auto-detection isn't working
-          final device = ESP32Device(
-            ipAddress: testIP,
-            deviceName: 'ESP32-CAM ($testIP)',
-            isConnected: false,
-          );
-
-          await _connectToDevice(device);
-        } catch (e) {
-          print('Debug: Stream test failed: $e');
-          _showMessage('Stream endpoint failed: $e', AppColors.error);
-        }
-      } else {
-        _showMessage(
-            'HTTP failed with status: ${response.statusCode}', AppColors.error);
-      }
-    } catch (e) {
-      print('Debug: Connection test failed: $e');
-      _showMessage('Connection failed: $e', AppColors.error);
-    }
-  }
-
   void _showMessage(String message, Color color) {
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -574,7 +519,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
         const SizedBox(height: 16),
 
-        // Buttons Row - Fixed overflow issue
+        // Buttons Row - Only Manual IP and Scan
         Row(
           children: [
             Expanded(
@@ -618,48 +563,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
               ),
             ),
-            const SizedBox(width: 8),
-            ElevatedButton.icon(
-              onPressed: () => _debugESP32Connection(),
-              icon: const Icon(Icons.bug_report_rounded, size: 18),
-              label: const Text('Debug'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.warning,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-            ),
           ],
-        ),
-
-        const SizedBox(height: 12),
-
-        // Quick Connect Button
-        SizedBox(
-          width: double.infinity,
-          child: ElevatedButton.icon(
-            onPressed: () async {
-              final device = ESP32Device(
-                ipAddress: '10.19.80.42',
-                deviceName: 'ESP32-CAM (10.19.80.42)',
-                isConnected: false,
-              );
-              await _connectToDevice(device);
-            },
-            icon: const Icon(Icons.flash_on_rounded),
-            label: const Text('Quick Connect (10.19.80.42)'),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(vertical: 14),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-          ),
         ),
 
         const SizedBox(height: 16),
@@ -710,7 +614,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               _buildTipItem('Both devices should be on the same network'),
               _buildTipItem('Check your router\'s admin panel for device IP'),
               _buildTipItem('Use Manual IP if auto-scan doesn\'t work'),
-              _buildTipItem('Try Quick Connect for your known ESP32-CAM'),
             ],
           ),
         ),
