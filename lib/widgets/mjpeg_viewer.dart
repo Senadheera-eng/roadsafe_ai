@@ -84,61 +84,109 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
   Stream<Uint8List> _mjpegStream(String url) async* {
     try {
+      print('📺 Starting MJPEG stream from: $url');
+
       final client = http.Client();
       final request = http.Request('GET', Uri.parse(url));
+      request.headers.addAll({
+        'Connection': 'close',
+        'Cache-Control': 'no-cache',
+        'Accept': 'multipart/x-mixed-replace,image/jpeg',
+      });
 
       final response = await client.send(request);
+      print('📡 Stream response status: ${response.statusCode}');
+      print('📋 Stream headers: ${response.headers}');
 
       if (response.statusCode != 200) {
         throw Exception(
             'HTTP ${response.statusCode}: Failed to connect to stream');
       }
 
-      const boundary = '\r\n--123456789000000000000987654321\r\n';
+      // Handle different boundary formats
+      String? contentType = response.headers['content-type'];
+      String boundary = '123456789000000000000987654321'; // Default boundary
+
+      if (contentType != null && contentType.contains('boundary=')) {
+        final boundaryMatch =
+            RegExp(r'boundary=([^;,\s]+)').firstMatch(contentType);
+        if (boundaryMatch != null) {
+          boundary = boundaryMatch.group(1)!;
+          print('📌 Detected boundary: $boundary');
+        }
+      }
+
       List<int> buffer = [];
       bool inImage = false;
+      int imageCount = 0;
 
       await for (List<int> chunk in response.stream) {
         buffer.addAll(chunk);
 
         if (!inImage) {
-          // Look for image start
+          // Look for start of image data
           String bufferStr = String.fromCharCodes(buffer);
-          int startIndex = bufferStr.indexOf('\r\n\r\n');
+          int headerEnd = bufferStr.indexOf('\r\n\r\n');
 
-          if (startIndex != -1) {
+          if (headerEnd != -1) {
             inImage = true;
-            buffer = buffer.sublist(startIndex + 4);
+            buffer = buffer.sublist(headerEnd + 4);
+            print('📸 Starting image ${++imageCount}');
           }
         }
 
         if (inImage) {
-          // Look for boundary (end of image)
+          // Look for end of image (next boundary or JPEG end marker)
           String bufferStr = String.fromCharCodes(buffer);
-          int endIndex = bufferStr.indexOf(boundary);
+          int boundaryIndex = bufferStr.indexOf('--$boundary');
+
+          // Also look for JPEG end marker
+          List<int> jpegEnd = [0xFF, 0xD9];
+          int jpegEndIndex = -1;
+          for (int i = 0; i < buffer.length - 1; i++) {
+            if (buffer[i] == jpegEnd[0] && buffer[i + 1] == jpegEnd[1]) {
+              jpegEndIndex = i + 2;
+              break;
+            }
+          }
+
+          int endIndex = -1;
+          if (boundaryIndex != -1 && jpegEndIndex != -1) {
+            endIndex =
+                jpegEndIndex < boundaryIndex ? jpegEndIndex : boundaryIndex;
+          } else if (jpegEndIndex != -1) {
+            endIndex = jpegEndIndex;
+          } else if (boundaryIndex != -1) {
+            endIndex = boundaryIndex;
+          }
 
           if (endIndex != -1) {
             // Extract image data
             List<int> imageData = buffer.sublist(0, endIndex);
 
-            if (imageData.isNotEmpty) {
+            if (imageData.length > 100) {
+              // Ensure it's a valid image
+              print(
+                  '✅ Yielding image ${imageCount}, size: ${imageData.length} bytes');
               yield Uint8List.fromList(imageData);
             }
 
             // Reset for next image
-            buffer = buffer.sublist(endIndex + boundary.length);
+            buffer = buffer.sublist(endIndex);
             inImage = false;
           }
         }
 
         // Prevent buffer from growing too large
-        if (buffer.length > 1024 * 1024) {
-          // 1MB limit
+        if (buffer.length > 2 * 1024 * 1024) {
+          // 2MB limit
+          print('⚠️ Buffer too large, resetting...');
           buffer.clear();
           inImage = false;
         }
       }
     } catch (e) {
+      print('❌ MJPEG stream error: $e');
       yield* Stream.error(e);
     }
   }

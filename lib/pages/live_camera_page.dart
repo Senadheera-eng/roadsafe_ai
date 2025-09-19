@@ -114,19 +114,29 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _discoveredDevices.clear();
     });
 
-    // Try targeted scan first
-    final targetedDevices = await _cameraService.scanKnownIPs();
+    // First try targeted scan for known IP
+    final knownDevices = await _cameraService.scanKnownESP32();
 
-    if (targetedDevices.isNotEmpty) {
+    if (knownDevices.isNotEmpty) {
       setState(() {
-        _discoveredDevices = targetedDevices;
+        _discoveredDevices = knownDevices;
         _isScanning = false;
       });
+      _showMessage('Found your ESP32-CAM!', AppColors.success);
       return;
     }
 
-    // If targeted scan fails, try full scan
+    // If known IP not found, do full scan with stricter detection
     await _cameraService.scanForDevices();
+
+    setState(() {
+      _isScanning = false;
+    });
+
+    if (_discoveredDevices.isEmpty) {
+      _showMessage('ESP32-CAM not found. Try Quick Connect or Manual IP.',
+          AppColors.warning);
+    }
   }
 
   // Update _connectToDevice method

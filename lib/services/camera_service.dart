@@ -180,52 +180,90 @@ class CameraService {
   // In your _checkESP32Device method, replace the existing one with this:
   Future<ESP32Device?> _checkESP32Device(String ipAddress) async {
     try {
-      print('Checking IP: $ipAddress');
-
       final response = await http.get(
         Uri.parse('http://$ipAddress/'),
-        headers: {
-          'Connection': 'close',
-          'User-Agent': 'RoadSafeAI/1.0',
-        },
-      ).timeout(Duration(seconds: 5));
-
-      print('IP $ipAddress responded with status: ${response.statusCode}');
+        headers: {'Connection': 'close'},
+      ).timeout(Duration(seconds: 3));
 
       if (response.statusCode == 200) {
         final body = response.body.toLowerCase();
-        print(
-            'Response body preview for $ipAddress: ${body.substring(0, body.length > 100 ? 100 : body.length)}');
+        final server = response.headers['server']?.toLowerCase() ?? '';
 
-        // More lenient detection - any working HTTP server could be ESP32
-        bool couldBeESP32 = body.contains('esp32') ||
-            body.contains('camera') ||
-            body.contains('cam') ||
-            body.contains('stream') ||
-            body.contains('video') ||
-            body.contains('html') || // Basic web server
-            response.headers['server']?.toLowerCase().contains('esp') == true;
+        // Much more specific ESP32-CAM detection
+        bool isESP32CAM = false;
 
-        if (couldBeESP32) {
-          print('✅ Potential ESP32-CAM found at $ipAddress');
+        // Check for specific ESP32-CAM indicators
+        if (body.contains('esp32') &&
+            (body.contains('camera') || body.contains('cam'))) {
+          isESP32CAM = true;
+        } else if (server.contains('esp32')) {
+          isESP32CAM = true;
+        } else if (body.contains('cameradivid') || body.contains('stream')) {
+          // Check if stream endpoint exists (more definitive test)
+          try {
+            final streamTest = await http
+                .head(
+                  Uri.parse('http://$ipAddress/stream'),
+                )
+                .timeout(Duration(seconds: 2));
+
+            if (streamTest.statusCode == 200) {
+              isESP32CAM = true;
+            }
+          } catch (e) {
+            // Stream test failed, probably not ESP32-CAM
+          }
+        }
+
+        if (isESP32CAM) {
+          print('✅ Confirmed ESP32-CAM at $ipAddress');
           return ESP32Device(
             ipAddress: ipAddress,
             deviceName: 'ESP32-CAM ($ipAddress)',
             isConnected: false,
           );
         } else {
-          print('❌ $ipAddress responded but doesn\'t appear to be ESP32-CAM');
+          print('❌ Device at $ipAddress is not ESP32-CAM (other web server)');
         }
       }
     } catch (e) {
-      // Only log if it's not a common network error
-      if (!e.toString().contains('Connection refused') &&
-          !e.toString().contains('No route to host')) {
-        print('Error checking $ipAddress: $e');
-      }
+      // Ignore connection errors
     }
 
     return null;
+  }
+
+  Future<List<ESP32Device>> scanKnownESP32() async {
+    print('Scanning known ESP32-CAM IP: 10.19.80.42');
+
+    List<ESP32Device> devices = [];
+
+    // Test your specific IP first
+    final device = await _checkESP32Device('10.19.80.42');
+    if (device != null) {
+      devices.add(device);
+    }
+
+    // If not found, try a few variations in case IP changed slightly
+    if (devices.isEmpty) {
+      List<String> similarIPs = [
+        '10.19.80.41',
+        '10.19.80.43',
+        '10.19.80.44',
+        '10.19.80.40',
+      ];
+
+      for (String ip in similarIPs) {
+        final testDevice = await _checkESP32Device(ip);
+        if (testDevice != null) {
+          devices.add(testDevice);
+          break; // Only add the first working one
+        }
+      }
+    }
+
+    _devicesController.add(devices);
+    return devices;
   }
 
   Future<List<ESP32Device>> scanKnownIPs() async {
@@ -264,16 +302,20 @@ class CameraService {
   // Connect to a specific ESP32 device
   Future<bool> connectToDevice(ESP32Device device) async {
     try {
-      print('Connecting to ${device.ipAddress}...');
+      print('Connecting to ESP32-CAM at ${device.ipAddress}...');
 
-      // Test the stream endpoint
-      final streamResponse = await http
-          .head(
-            Uri.parse('http://${device.ipAddress}/stream'),
+      // Test basic connectivity
+      final basicTest = await http
+          .get(
+            Uri.parse('http://${device.ipAddress}/'),
           )
           .timeout(Duration(seconds: 5));
 
-      if (streamResponse.statusCode == 200) {
+      if (basicTest.statusCode == 200) {
+        print('Basic connectivity OK');
+
+        // For ESP32-CAM, just ensure basic connectivity works
+        // The stream will be tested when actually viewing
         _connectedDevice = ESP32Device(
           ipAddress: device.ipAddress,
           deviceName: device.deviceName,
@@ -281,11 +323,11 @@ class CameraService {
         );
 
         _connectionController.add(true);
-        print('Successfully connected to ${device.ipAddress}');
+        print('Successfully connected to ESP32-CAM!');
         return true;
       }
     } catch (e) {
-      print('Failed to connect to ${device.ipAddress}: $e');
+      print('Connection failed: $e');
     }
 
     _connectionController.add(false);
