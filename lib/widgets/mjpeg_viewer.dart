@@ -70,7 +70,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    _detectionTimer = Timer.periodic(Duration(seconds: 5), (timer) {
+    // Analyze every 8 seconds instead of 5 to reduce load
+    _detectionTimer = Timer.periodic(Duration(seconds: 8), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -90,22 +91,28 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      print('Analyzing frame for drowsiness...');
+      print('🔍 Analyzing frame for drowsiness...');
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
       if (result != null) {
-        print('Analysis result: ${result.isDrowsy ? "DROWSY" : "ALERT"}');
+        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
 
         if (result.isDrowsy) {
-          DrowsinessDetector.triggerDrowsinessAlert();
+          print('🚨 DROWSINESS DETECTED!');
+          await DrowsinessDetector.triggerDrowsinessAlert();
+
           if (widget.onDrowsinessDetected != null) {
             widget.onDrowsinessDetected!(result);
           }
+        } else {
+          print('✅ Driver appears alert');
         }
+      } else {
+        print('❌ Analysis failed - no result');
       }
     } catch (e) {
-      print('Frame analysis error: $e');
+      print('❌ Frame analysis error: $e');
     } finally {
       if (mounted) {
         setState(() {

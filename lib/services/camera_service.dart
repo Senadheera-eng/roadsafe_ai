@@ -343,23 +343,18 @@ class CameraService {
 
   // Test if current connection is still active
   Future<bool> testConnection() async {
-    if (_connectedDevice == null) return false;
+    if (!isConnected || _connectedDevice == null) return false;
 
     try {
       final response = await http
           .head(
-            Uri.parse('http://${_connectedDevice!.ipAddress}/stream'),
+            Uri.parse('http://${_connectedDevice!.ipAddress}/'),
           )
-          .timeout(Duration(seconds: 3));
+          .timeout(Duration(seconds: 5));
 
-      final isConnected = response.statusCode == 200;
-      if (!isConnected) {
-        disconnect();
-      }
-
-      return isConnected;
+      return response.statusCode == 200;
     } catch (e) {
-      disconnect();
+      print('Connection test failed: $e');
       return false;
     }
   }

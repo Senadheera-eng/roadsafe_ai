@@ -88,22 +88,26 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   void _startConnectionWatchdog() {
     _connectionWatchdog?.cancel();
 
-    _connectionWatchdog = Timer.periodic(Duration(seconds: 5), (timer) async {
+    // Much less aggressive - check every 30 seconds instead of 5
+    _connectionWatchdog = Timer.periodic(Duration(seconds: 30), (timer) async {
       if (_cameraService.isConnected) {
-        final isStillConnected = await _cameraService.testConnection();
-        if (!isStillConnected && mounted) {
-          _showMessage(
-              'Connection lost, attempting to reconnect...', AppColors.warning);
+        try {
+          // Simple ping test instead of full connection test
+          final response = await http
+              .head(
+                Uri.parse(
+                    'http://${_cameraService.connectedDevice?.ipAddress}/'),
+              )
+              .timeout(Duration(seconds: 3));
 
-          // Try to reconnect to last known IP
-          if (_lastConnectedIP != null) {
-            final device = ESP32Device(
-              ipAddress: _lastConnectedIP!,
-              deviceName: 'ESP32-CAM ($_lastConnectedIP)',
-              isConnected: false,
-            );
-
-            await _connectToDevice(device);
+          if (response.statusCode != 200) {
+            throw Exception('Device not responding');
+          }
+        } catch (e) {
+          if (mounted) {
+            print('Connection check failed: $e');
+            // Only show reconnection message if it's a real failure
+            _showMessage('Connection check failed', AppColors.warning);
           }
         }
       }
