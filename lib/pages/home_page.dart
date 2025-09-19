@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:road_safe_ai/pages/live_camera_page.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
@@ -571,7 +572,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Real-time ESP32 monitoring',
                 color: AppColors.cameraFeed,
                 gradientColors: AppColors.primaryGradient,
-                onTap: () => _showFeatureNotification('Live Camera'),
+                onTap: () => _navigateToLiveCamera(), // Update this line
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
@@ -634,6 +635,30 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const DeviceSetupPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  void _navigateToLiveCamera() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const LiveCameraPage(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(1.0, 0.0);
           const end = Offset.zero;
