@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import '../services/drowsiness_service.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../theme/app_colors.dart';
@@ -25,6 +25,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
 
+  bool _isDrowsinessDetectionEnabled = false;
+  DrowsinessResult? _lastDetectionResult;
   bool _isScanning = false;
   bool _isConnecting = false;
   List<ESP32Device> _discoveredDevices = [];
@@ -106,6 +108,14 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         }
       }
     });
+  }
+
+  void _onDrowsinessDetected(DrowsinessResult result) {
+    setState(() {
+      _lastDetectionResult = result;
+    });
+
+    _showMessage('DROWSINESS DETECTED! Phone is vibrating.', AppColors.error);
   }
 
   Future<void> _startScanning() async {
@@ -395,12 +405,47 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Live Feed',
-          style: AppTextStyles.headlineSmall.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Live Feed',
+              style: AppTextStyles.headlineSmall.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            // AI Detection Toggle
+            Row(
+              children: [
+                Icon(
+                  Icons.psychology_rounded,
+                  color: _isDrowsinessDetectionEnabled
+                      ? AppColors.success
+                      : AppColors.textHint,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Switch(
+                  value: _isDrowsinessDetectionEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _isDrowsinessDetectionEnabled = value;
+                    });
+
+                    _showMessage(
+                      value
+                          ? 'AI Drowsiness Detection Enabled'
+                          : 'AI Drowsiness Detection Disabled',
+                      value ? AppColors.success : AppColors.warning,
+                    );
+                  },
+                  activeColor: AppColors.success,
+                ),
+              ],
+            ),
+          ],
         ),
+
         const SizedBox(height: 16),
 
         Container(
@@ -418,6 +463,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             borderRadius: BorderRadius.circular(18),
             child: MjpegViewer(
               isLive: true,
+              enableDrowsinessDetection: _isDrowsinessDetectionEnabled,
+              onDrowsinessDetected: _onDrowsinessDetected,
+              stream: _cameraService.streamUrl,
               error: (context, error, stack) {
                 return Center(
                   child: Column(
@@ -454,14 +502,58 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   ),
                 );
               },
-              stream: _cameraService.streamUrl,
             ),
           ),
         ),
 
         const SizedBox(height: 16),
 
-        // Camera Controls
+        // Simple Status Display
+        if (_isDrowsinessDetectionEnabled && _lastDetectionResult != null)
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _lastDetectionResult!.isDrowsy
+                  ? AppColors.error.withOpacity(0.1)
+                  : AppColors.success.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: _lastDetectionResult!.isDrowsy
+                    ? AppColors.error
+                    : AppColors.success,
+                width: 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(
+                  _lastDetectionResult!.isDrowsy
+                      ? Icons.warning
+                      : Icons.check_circle,
+                  color: _lastDetectionResult!.isDrowsy
+                      ? AppColors.error
+                      : AppColors.success,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Text(
+                  _lastDetectionResult!.isDrowsy
+                      ? 'DROWSINESS DETECTED'
+                      : 'Driver Alert',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: _lastDetectionResult!.isDrowsy
+                        ? AppColors.error
+                        : AppColors.success,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        const SizedBox(height: 16),
+
+        // Camera Controls (keep your existing controls)
         Row(
           children: [
             Expanded(
