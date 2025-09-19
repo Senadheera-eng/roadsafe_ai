@@ -1,10 +1,9 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'dart:async';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../services/camera_service.dart';
+import '../services/drowsiness_service.dart';
 import '../widgets/glass_card.dart';
 import '../widgets/mjpeg_viewer.dart';
 
@@ -17,9 +16,6 @@ class LiveCameraPage extends StatefulWidget {
 
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
-  Timer? _connectionWatchdog;
-  String? _lastConnectedIP;
-
   final CameraService _cameraService = CameraService();
 
   late AnimationController _animationController;
@@ -28,6 +24,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   bool _isScanning = false;
   bool _isConnecting = false;
   List<ESP32Device> _discoveredDevices = [];
+
+  // Drowsiness Detection variables
+  bool _isDrowsinessDetectionEnabled = false;
+  DrowsinessResult? _lastDetectionResult;
+  DateTime? _lastAlertTime;
+  Timer? _connectionWatchdog;
+  String? _lastConnectedIP;
 
   @override
   void initState() {
@@ -68,12 +71,21 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         if (isConnected) {
           _showMessage(
               'Connected to ESP32-CAM successfully!', AppColors.success);
+          _startConnectionWatchdog();
         }
       }
     });
 
+    // Initialize services
+    _initializeServices();
+
     // Auto-start scanning
     _startScanning();
+  }
+
+  Future<void> _initializeServices() async {
+    await DrowsinessDetector.initialize();
+    await AlertService.initialize();
   }
 
   @override
@@ -83,10 +95,56 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     super.dispose();
   }
 
+  Future<void> _startScanning() async {
+    setState(() {
+      _isScanning = true;
+      _discoveredDevices.clear();
+    });
+
+    // First try targeted scan for known IP
+    final knownDevices = await _cameraService.scanKnownESP32();
+
+    if (knownDevices.isNotEmpty) {
+      setState(() {
+        _discoveredDevices = knownDevices;
+        _isScanning = false;
+      });
+      _showMessage('Found your ESP32-CAM!', AppColors.success);
+      return;
+    }
+
+    // If known IP not found, do full scan
+    await _cameraService.scanForDevices();
+
+    setState(() {
+      _isScanning = false;
+    });
+
+    if (_discoveredDevices.isEmpty) {
+      _showMessage('ESP32-CAM not found. Try Manual IP.', AppColors.warning);
+    }
+  }
+
+  Future<void> _connectToDevice(ESP32Device device) async {
+    setState(() {
+      _isConnecting = true;
+    });
+
+    final success = await _cameraService.connectToDevice(device);
+
+    if (success) {
+      _lastConnectedIP = device.ipAddress;
+      _startConnectionWatchdog();
+    } else {
+      _showMessage(
+          'Failed to connect to ${device.deviceName}', AppColors.error);
+    }
+  }
+
   void _startConnectionWatchdog() {
     _connectionWatchdog?.cancel();
 
-    _connectionWatchdog = Timer.periodic(Duration(seconds: 5), (timer) async {
+    _connectionWatchdog = Timer.periodic(Duration(seconds: 10), (timer) async {
       if (_cameraService.isConnected) {
         final isStillConnected = await _cameraService.testConnection();
         if (!isStillConnected && mounted) {
@@ -108,51 +166,26 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     });
   }
 
-  Future<void> _startScanning() async {
+  void _onDrowsinessDetected(DrowsinessResult result) {
     setState(() {
-      _isScanning = true;
-      _discoveredDevices.clear();
+      _lastDetectionResult = result;
     });
 
-    // First try targeted scan for known IP
-    final knownDevices = await _cameraService.scanKnownESP32();
+    // Trigger alert if drowsiness detected and not recently alerted
+    if (result.isDrowsy) {
+      final now = DateTime.now();
+      if (_lastAlertTime == null ||
+          now.difference(_lastAlertTime!).inSeconds > 10) {
+        // 10 second cooldown
 
-    if (knownDevices.isNotEmpty) {
-      setState(() {
-        _discoveredDevices = knownDevices;
-        _isScanning = false;
-      });
-      _showMessage('Found your ESP32-CAM!', AppColors.success);
-      return;
-    }
+        _lastAlertTime = now;
+        AlertService.triggerDrowsinessAlert();
 
-    // If known IP not found, do full scan with stricter detection
-    await _cameraService.scanForDevices();
-
-    setState(() {
-      _isScanning = false;
-    });
-
-    if (_discoveredDevices.isEmpty) {
-      _showMessage('ESP32-CAM not found. Try Quick Connect or Manual IP.',
-          AppColors.warning);
-    }
-  }
-
-  // Update _connectToDevice method
-  Future<void> _connectToDevice(ESP32Device device) async {
-    setState(() {
-      _isConnecting = true;
-    });
-
-    final success = await _cameraService.connectToDevice(device);
-
-    if (success) {
-      _lastConnectedIP = device.ipAddress;
-      _startConnectionWatchdog();
-    } else {
-      _showMessage(
-          'Failed to connect to ${device.deviceName}', AppColors.error);
+        _showMessage(
+          'DROWSINESS DETECTED! Please take a break.',
+          AppColors.error,
+        );
+      }
     }
   }
 
@@ -172,98 +205,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         ),
       );
     }
-  }
-
-  void _showManualIPDialog() {
-    final TextEditingController ipController = TextEditingController();
-
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Text(
-          'Manual IP Entry',
-          style: AppTextStyles.titleLarge.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Enter your ESP32-CAM IP address:',
-              style: AppTextStyles.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: ipController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                hintText: 'e.g., 10.19.80.42',
-                prefixIcon: const Icon(Icons.router_rounded),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppColors.primary, width: 2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'You can find the IP address in your ESP32 serial monitor or router admin panel.',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: AppTextStyles.labelLarge.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final ip = ipController.text.trim();
-              if (ip.isNotEmpty) {
-                // Basic IP validation
-                final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
-                if (ipRegex.hasMatch(ip)) {
-                  final device = ESP32Device(
-                    ipAddress: ip,
-                    deviceName: 'ESP32-CAM ($ip)',
-                    isConnected: false,
-                  );
-                  await _connectToDevice(device);
-                } else {
-                  _showMessage('Invalid IP address format', AppColors.error);
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text('Connect'),
-          ),
-        ],
-      ),
-    );
   }
 
   @override
@@ -379,7 +320,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             IconButton(
               onPressed: () {
                 _cameraService.disconnect();
-                setState(() {});
+                setState(() {
+                  _isDrowsinessDetectionEnabled = false;
+                });
               },
               icon: Icon(
                 Icons.close_rounded,
@@ -395,12 +338,49 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(
-          'Live Feed',
-          style: AppTextStyles.headlineSmall.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              'Live Feed',
+              style: AppTextStyles.headlineSmall.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            // AI Detection Toggle
+            Row(
+              children: [
+                Icon(
+                  Icons.psychology_rounded,
+                  color: _isDrowsinessDetectionEnabled
+                      ? AppColors.success
+                      : AppColors.textHint,
+                  size: 20,
+                ),
+                const SizedBox(width: 8),
+                Switch(
+                  value: _isDrowsinessDetectionEnabled,
+                  onChanged: (value) {
+                    setState(() {
+                      _isDrowsinessDetectionEnabled = value;
+                    });
+
+                    if (value) {
+                      _showMessage(
+                          'AI Drowsiness Detection Enabled', AppColors.success);
+                    } else {
+                      AlertService.stopAlerts();
+                      _showMessage('AI Drowsiness Detection Disabled',
+                          AppColors.warning);
+                    }
+                  },
+                  activeColor: AppColors.success,
+                ),
+              ],
+            ),
+          ],
         ),
+
         const SizedBox(height: 16),
 
         Container(
@@ -418,6 +398,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             borderRadius: BorderRadius.circular(18),
             child: MjpegViewer(
               isLive: true,
+              enableDrowsinessDetection: _isDrowsinessDetectionEnabled,
+              onDrowsinessDetected: _onDrowsinessDetected,
+              stream: _cameraService.streamUrl,
               error: (context, error, stack) {
                 return Center(
                   child: Column(
@@ -442,22 +425,66 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                           color: Colors.white70,
                         ),
                       ),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          _cameraService.disconnect();
-                          setState(() {});
-                        },
-                        child: const Text('Reconnect'),
-                      ),
                     ],
                   ),
                 );
               },
-              stream: _cameraService.streamUrl,
             ),
           ),
         ),
+
+        const SizedBox(height: 16),
+
+        // Detection Status
+        if (_isDrowsinessDetectionEnabled)
+          GlassCard(
+            padding: const EdgeInsets.all(16),
+            borderRadius: 16,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _lastDetectionResult?.isDrowsy == true
+                          ? Icons.warning_rounded
+                          : Icons.check_circle_rounded,
+                      color: _lastDetectionResult?.isDrowsy == true
+                          ? AppColors.error
+                          : AppColors.success,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Driver Status',
+                      style: AppTextStyles.titleMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  _lastDetectionResult?.isDrowsy == true
+                      ? 'DROWSINESS DETECTED'
+                      : 'Driver Alert',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: _lastDetectionResult?.isDrowsy == true
+                        ? AppColors.error
+                        : AppColors.success,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                if (_lastDetectionResult != null)
+                  Text(
+                    'Confidence: ${(_lastDetectionResult!.confidence * 100).toStringAsFixed(1)}%',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+              ],
+            ),
+          ),
 
         const SizedBox(height: 16),
 
@@ -467,12 +494,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             Expanded(
               child: ElevatedButton.icon(
                 onPressed: () {
-                  _showMessage('Capture feature coming soon!', AppColors.info);
+                  AlertService.stopAlerts();
+                  _showMessage('Alerts stopped', AppColors.info);
                 },
-                icon: const Icon(Icons.camera_rounded),
-                label: const Text('Capture'),
+                icon: const Icon(Icons.volume_off_rounded),
+                label: const Text('Stop Alerts'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.secondary,
+                  backgroundColor: AppColors.warning,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                   shape: RoundedRectangleBorder(
@@ -519,7 +547,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
         const SizedBox(height: 16),
 
-        // Buttons Row - Only Manual IP and Scan
+        // Buttons Row
         Row(
           children: [
             Expanded(
@@ -618,35 +646,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           ),
         ),
       ],
-    );
-  }
-
-  Widget _buildTipItem(String tip) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 4,
-            height: 4,
-            margin: const EdgeInsets.only(top: 8, right: 8),
-            decoration: BoxDecoration(
-              color: AppColors.info,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-          Expanded(
-            child: Text(
-              tip,
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 
@@ -766,6 +765,127 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             style: AppTextStyles.bodySmall.copyWith(
               color: AppColors.textSecondary,
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTipItem(String tip) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 4,
+            height: 4,
+            margin: const EdgeInsets.only(top: 8, right: 8),
+            decoration: BoxDecoration(
+              color: AppColors.info,
+              borderRadius: BorderRadius.circular(2),
+            ),
+          ),
+          Expanded(
+            child: Text(
+              tip,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+                height: 1.4,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showManualIPDialog() {
+    final TextEditingController ipController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+        ),
+        title: Text(
+          'Manual IP Entry',
+          style: AppTextStyles.titleLarge.copyWith(
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Enter your ESP32-CAM IP address:',
+              style: AppTextStyles.bodyMedium,
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: ipController,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              decoration: InputDecoration(
+                hintText: 'e.g., 10.19.80.42',
+                prefixIcon: const Icon(Icons.router_rounded),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(12),
+                  borderSide: BorderSide(color: AppColors.primary, width: 2),
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              'You can find the IP address in your ESP32 serial monitor or router admin panel.',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(
+              'Cancel',
+              style: AppTextStyles.labelLarge.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ),
+          ElevatedButton(
+            onPressed: () async {
+              Navigator.pop(context);
+              final ip = ipController.text.trim();
+              if (ip.isNotEmpty) {
+                // Basic IP validation
+                final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
+                if (ipRegex.hasMatch(ip)) {
+                  final device = ESP32Device(
+                    ipAddress: ip,
+                    deviceName: 'ESP32-CAM ($ip)',
+                    isConnected: false,
+                  );
+                  await _connectToDevice(device);
+                } else {
+                  _showMessage('Invalid IP address format', AppColors.error);
+                }
+              }
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: const Text('Connect'),
           ),
         ],
       ),
