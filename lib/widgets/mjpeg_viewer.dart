@@ -2,12 +2,15 @@ import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../services/drowsiness_service.dart';
 
 class MjpegViewer extends StatefulWidget {
   final String stream;
   final bool isLive;
   final Widget Function(BuildContext, Object, StackTrace?)? error;
   final Widget? loading;
+  final bool enableDrowsinessDetection;
+  final Function(DrowsinessResult)? onDrowsinessDetected;
 
   const MjpegViewer({
     Key? key,
@@ -15,6 +18,8 @@ class MjpegViewer extends StatefulWidget {
     this.isLive = true,
     this.error,
     this.loading,
+    this.enableDrowsinessDetection = false,
+    this.onDrowsinessDetected,
   }) : super(key: key);
 
   @override
@@ -27,10 +32,17 @@ class _MjpegViewerState extends State<MjpegViewer> {
   bool _isLoading = true;
   String? _error;
 
+  Timer? _detectionTimer;
+  bool _isAnalyzing = false;
+
   @override
   void initState() {
     super.initState();
     _startStream();
+
+    if (widget.enableDrowsinessDetection) {
+      _startDrowsinessDetection();
+    }
   }
 
   @override
@@ -40,12 +52,74 @@ class _MjpegViewerState extends State<MjpegViewer> {
       _stopStream();
       _startStream();
     }
+
+    if (widget.enableDrowsinessDetection &&
+        !oldWidget.enableDrowsinessDetection) {
+      _startDrowsinessDetection();
+    } else if (!widget.enableDrowsinessDetection &&
+        oldWidget.enableDrowsinessDetection) {
+      _stopDrowsinessDetection();
+    }
   }
 
   @override
   void dispose() {
     _stopStream();
+    _stopDrowsinessDetection();
     super.dispose();
+  }
+
+  void _startDrowsinessDetection() {
+    // Analyze every 8 seconds instead of 5 to reduce load
+    _detectionTimer = Timer.periodic(Duration(seconds: 8), (timer) {
+      if (_currentFrame != null && !_isAnalyzing) {
+        _analyzeCurrentFrame();
+      }
+    });
+  }
+
+  void _stopDrowsinessDetection() {
+    _detectionTimer?.cancel();
+    _detectionTimer = null;
+  }
+
+  Future<void> _analyzeCurrentFrame() async {
+    if (_currentFrame == null || _isAnalyzing) return;
+
+    setState(() {
+      _isAnalyzing = true;
+    });
+
+    try {
+      print('🔍 Analyzing frame for drowsiness...');
+
+      final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
+
+      if (result != null) {
+        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
+
+        if (result.isDrowsy) {
+          print('🚨 DROWSINESS DETECTED!');
+          await DrowsinessDetector.triggerDrowsinessAlert();
+
+          if (widget.onDrowsinessDetected != null) {
+            widget.onDrowsinessDetected!(result);
+          }
+        } else {
+          print('✅ Driver appears alert');
+        }
+      } else {
+        print('❌ Analysis failed - no result');
+      }
+    } catch (e) {
+      print('❌ Frame analysis error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAnalyzing = false;
+        });
+      }
+    }
   }
 
   void _startStream() {
@@ -94,7 +168,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             'HTTP ${response.statusCode}: Failed to connect to stream');
       }
 
-      const boundary = '\r\n--123456789000000000000987654321\r\n';
+      const boundary = '123456789000000000000987654321';
       List<int> buffer = [];
       bool inImage = false;
 
@@ -102,7 +176,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
         buffer.addAll(chunk);
 
         if (!inImage) {
-          // Look for image start
           String bufferStr = String.fromCharCodes(buffer);
           int startIndex = bufferStr.indexOf('\r\n\r\n');
 
@@ -113,27 +186,22 @@ class _MjpegViewerState extends State<MjpegViewer> {
         }
 
         if (inImage) {
-          // Look for boundary (end of image)
           String bufferStr = String.fromCharCodes(buffer);
           int endIndex = bufferStr.indexOf(boundary);
 
           if (endIndex != -1) {
-            // Extract image data
             List<int> imageData = buffer.sublist(0, endIndex);
 
             if (imageData.isNotEmpty) {
               yield Uint8List.fromList(imageData);
             }
 
-            // Reset for next image
             buffer = buffer.sublist(endIndex + boundary.length);
             inImage = false;
           }
         }
 
-        // Prevent buffer from growing too large
         if (buffer.length > 1024 * 1024) {
-          // 1MB limit
           buffer.clear();
           inImage = false;
         }
@@ -151,22 +219,10 @@ class _MjpegViewerState extends State<MjpegViewer> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 48,
-                  color: Colors.red[300],
-                ),
+                Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
                 const SizedBox(height: 16),
-                Text(
-                  'Stream Error',
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
+                Text('Stream Error',
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
               ],
             ),
           );
@@ -180,10 +236,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
               children: [
                 CircularProgressIndicator(color: Colors.white),
                 SizedBox(height: 16),
-                Text(
-                  'Connecting to camera...',
-                  style: TextStyle(color: Colors.white),
-                ),
+                Text('Connecting to camera...',
+                    style: TextStyle(color: Colors.white)),
               ],
             ),
           );
@@ -191,36 +245,49 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
     if (_currentFrame == null) {
       return const Center(
-        child: Text(
-          'No video data',
-          style: TextStyle(color: Colors.white),
-        ),
+        child: Text('No video data', style: TextStyle(color: Colors.white)),
       );
     }
 
-    return Image.memory(
-      _currentFrame!,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (context, error, stackTrace) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.broken_image,
-                size: 48,
-                color: Colors.red[300],
+    return Stack(
+      children: [
+        Image.memory(
+          _currentFrame!,
+          fit: BoxFit.cover,
+          gaplessPlayback: true,
+        ),
+        if (widget.enableDrowsinessDetection)
+          Positioned(
+            top: 10,
+            left: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _isAnalyzing ? Colors.orange : Colors.green,
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Image Error',
-                style: TextStyle(color: Colors.white),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isAnalyzing ? Icons.psychology : Icons.visibility,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isAnalyzing ? 'Analyzing...' : 'AI Active',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        );
-      },
+      ],
     );
   }
 }
