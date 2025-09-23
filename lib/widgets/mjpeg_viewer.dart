@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import '../services/drowsiness_service.dart';
@@ -34,6 +35,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
   Timer? _detectionTimer;
   bool _isAnalyzing = false;
+  List<DetectionBox> _detectionBoxes = [];
+  Size? _imageSize;
 
   @override
   void initState() {
@@ -70,8 +73,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Analyze every 8 seconds instead of 5 to reduce load
-    _detectionTimer = Timer.periodic(Duration(seconds: 8), (timer) {
+    _detectionTimer = Timer.periodic(Duration(seconds: 5), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -81,6 +83,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
+    setState(() {
+      _detectionBoxes.clear();
+    });
   }
 
   Future<void> _analyzeCurrentFrame() async {
@@ -95,7 +100,11 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
-      if (result != null) {
+      if (result != null && mounted) {
+        setState(() {
+          _detectionBoxes = result.detectionBoxes;
+        });
+
         print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
 
         if (result.isDrowsy) {
@@ -138,6 +147,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             _isLoading = false;
             _error = null;
           });
+          _getImageSize(frame);
         }
       },
       onError: (error) {
@@ -149,6 +159,19 @@ class _MjpegViewerState extends State<MjpegViewer> {
         }
       },
     );
+  }
+
+  Future<void> _getImageSize(Uint8List imageBytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+      setState(() {
+        _imageSize =
+            Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+      });
+    } catch (e) {
+      print('Error getting image size: $e');
+    }
   }
 
   void _stopStream() {
@@ -223,6 +246,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
                 const SizedBox(height: 16),
                 Text('Stream Error',
                     style: TextStyle(color: Colors.white, fontSize: 16)),
+                const SizedBox(height: 8),
+                Text(_error!,
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),
           );
@@ -251,11 +277,29 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
     return Stack(
       children: [
-        Image.memory(
-          _currentFrame!,
-          fit: BoxFit.cover,
-          gaplessPlayback: true,
+        // Video feed
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              children: [
+                Image.memory(
+                  _currentFrame!,
+                  fit: BoxFit.cover,
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  gaplessPlayback: true,
+                ),
+
+                // Detection overlay
+                if (widget.enableDrowsinessDetection &&
+                    _detectionBoxes.isNotEmpty)
+                  ...buildDetectionOverlay(constraints),
+              ],
+            );
+          },
         ),
+
+        // AI Status indicator
         if (widget.enableDrowsinessDetection)
           Positioned(
             top: 10,
@@ -287,7 +331,82 @@ class _MjpegViewerState extends State<MjpegViewer> {
               ),
             ),
           ),
+
+        // Detection count
+        if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'Detections: ${_detectionBoxes.length}',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
       ],
     );
+  }
+
+  List<Widget> buildDetectionOverlay(BoxConstraints constraints) {
+    if (_imageSize == null) return [];
+
+    final scaleX = constraints.maxWidth / _imageSize!.width;
+    final scaleY = constraints.maxHeight / _imageSize!.height;
+
+    return _detectionBoxes.map((detection) {
+      final left = detection.x * scaleX;
+      final top = detection.y * scaleY;
+      final width = detection.width * scaleX;
+      final height = detection.height * scaleY;
+
+      return Positioned(
+        left: left,
+        top: top,
+        child: Container(
+          width: width,
+          height: height,
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: detection.isDrowsy ? Colors.red : Colors.green,
+              width: 2,
+            ),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                decoration: BoxDecoration(
+                  color: detection.isDrowsy ? Colors.red : Colors.green,
+                  borderRadius: BorderRadius.only(
+                    topLeft: Radius.circular(2),
+                    topRight: Radius.circular(2),
+                  ),
+                ),
+                child: Text(
+                  '${detection.className} ${(detection.confidence * 100).toInt()}%',
+                  style: TextStyle(
+                    color: Colors.white,
+                    fontSize: 10,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }).toList();
   }
 }
