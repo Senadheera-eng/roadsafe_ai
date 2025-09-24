@@ -32,23 +32,35 @@ class DetectionBox {
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
-    // Improved drowsiness detection logic
+    // Enhanced drowsiness detection - check for multiple possible class names
     bool isDrowsy = false;
 
-    // Direct drowsiness indicators
-    if ((className.contains('closed') ||
-            className.contains('drowsy') ||
-            className.contains('sleepy') ||
-            className.contains('tired') ||
-            className.contains('yawn')) &&
-        confidence > 0.2) {
-      // Lowered threshold
-      isDrowsy = true;
-    }
-
-    // Low confidence "open" eyes might indicate tiredness
-    if (className.contains('open') && confidence < 0.6) {
-      isDrowsy = true; // Consider as potential drowsiness
+    if (confidence > 0.2) {
+      // Lower threshold to catch more detections
+      // Check for various drowsiness indicators the model might return
+      if (className.contains('close') || // "closed", "close", "eye_close"
+          className.contains('shut') || // "shut", "eye_shut"
+          className.contains('drowsy') || // "drowsy"
+          className.contains('sleepy') || // "sleepy"
+          className.contains('tired') || // "tired"
+          className.contains('yawn') || // "yawn", "yawning"
+          className.contains('blink') || // "blink", "long_blink"
+          className.contains('nod')) {
+        // "head_nod", "nodding"
+        isDrowsy = true;
+        print(
+            '✅ Drowsiness detected in DetectionBox: "$className" at ${(confidence * 100).toInt()}%');
+      } else if (className.contains('open')) {
+        isDrowsy = false; // Open eyes are definitely NOT drowsy
+        print(
+            '👀 Alert state: Open eyes detected - "$className" at ${(confidence * 100).toInt()}%');
+      } else {
+        print(
+            '❓ Unknown class detected: "$className" at ${(confidence * 100).toInt()}%');
+      }
+    } else {
+      print(
+          '📉 Low confidence detection ignored: "$className" at ${(confidence * 100).toInt()}%');
     }
 
     return DetectionBox(
@@ -236,22 +248,45 @@ class DrowsinessResult {
       totalPredictions = predictions.length;
 
       print('📊 Found ${totalPredictions} predictions');
+      print('📋 Raw predictions: $predictions');
 
       for (var pred in predictions) {
         try {
+          final className = (pred['class'] ?? '').toString().toLowerCase();
+          final confidence = (pred['confidence'] ?? 0.0).toDouble();
+
+          print(
+              '🎯 Raw Prediction: "$className" (confidence: ${(confidence * 100).toInt()}%)');
+
           final box = DetectionBox.fromJson(pred);
           detectionBoxes.add(box);
 
-          print(
-              '🎯 Prediction: ${box.className} (confidence: ${(box.confidence * 100).toInt()}%) at (${box.x.toInt()}, ${box.y.toInt()})');
+          // Check for ANY drowsiness indicators with lower threshold
+          bool isThisDrowsy = false;
 
-          // Check for drowsiness indicators
-          if (box.isDrowsy) {
-            isDrowsy = true;
-            if (box.confidence > maxConfidence) {
-              maxConfidence = box.confidence;
+          if (confidence > 0.2) {
+            // Lower threshold to catch more
+            // Check for various possible drowsiness class names
+            if (className.contains('close') || // "closed", "close"
+                className.contains('shut') || // "shut"
+                className.contains('drowsy') ||
+                className.contains('sleepy') ||
+                className.contains('tired') ||
+                className.contains('yawn') ||
+                className.contains('blink') || // long blinks
+                className.contains('nod')) {
+              // head nodding
+              isThisDrowsy = true;
+              print(
+                  '⚠️ DROWSINESS INDICATOR FOUND: "$className" at ${(confidence * 100).toInt()}%');
             }
-            print('⚠️ Drowsiness indicator found: ${box.className}');
+          }
+
+          if (isThisDrowsy) {
+            isDrowsy = true;
+            if (confidence > maxConfidence) {
+              maxConfidence = confidence;
+            }
           }
         } catch (e) {
           print('❌ Error parsing detection box: $e');
@@ -271,7 +306,10 @@ class DrowsinessResult {
     );
 
     print(
-        '📋 Final result: ${result.isDrowsy ? "DROWSY" : "ALERT"} with ${result.detectionBoxes.length} detection boxes');
+        '📋 Final result: ${result.isDrowsy ? "🚨 DROWSY" : "✅ ALERT"} with ${result.detectionBoxes.length} detection boxes');
+    if (result.isDrowsy) {
+      print('🚨 DROWSINESS CONFIRMED - SHOULD VIBRATE NOW!');
+    }
     return result;
   }
 }
