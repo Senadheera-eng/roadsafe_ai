@@ -32,13 +32,24 @@ class DetectionBox {
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
-    // Determine if this detection indicates drowsiness
-    final isDrowsy = (className.contains('closed') ||
+    // Improved drowsiness detection logic
+    bool isDrowsy = false;
+
+    // Direct drowsiness indicators
+    if ((className.contains('closed') ||
             className.contains('drowsy') ||
             className.contains('sleepy') ||
             className.contains('tired') ||
             className.contains('yawn')) &&
-        confidence > 0.3;
+        confidence > 0.2) {
+      // Lowered threshold
+      isDrowsy = true;
+    }
+
+    // Low confidence "open" eyes might indicate tiredness
+    if (className.contains('open') && confidence < 0.6) {
+      isDrowsy = true; // Consider as potential drowsiness
+    }
 
     return DetectionBox(
       x: x - (width / 2), // Convert center x to top-left x
@@ -66,18 +77,19 @@ class DrowsinessDetector {
       String base64Image = base64Encode(imageBytes);
       print('🔄 Base64 length: ${base64Image.length}');
 
-      // Make API request with proper headers
+      // Make API request with lower confidence threshold for better detection
       final response = await http
           .post(
             Uri.parse(
-                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.2&overlap=0.5'),
+                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.1&overlap=0.3'),
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
               'User-Agent': 'RoadSafeAI/1.0',
             },
             body: base64Image,
           )
-          .timeout(Duration(seconds: 15));
+          .timeout(
+              Duration(seconds: 10)); // Reduced timeout for faster response
 
       print('📡 API Response Status: ${response.statusCode}');
 
@@ -120,19 +132,54 @@ class DrowsinessDetector {
     print('🚨 DROWSINESS DETECTED - Triggering vibration');
 
     try {
-      if (await Vibration.hasVibrator() ?? false) {
-        // Strong vibration pattern for drowsiness alert
-        await Vibration.vibrate(
-          pattern: [0, 1000, 300, 1000, 300, 1000], // Long strong vibrations
-          intensities: [0, 255, 0, 255, 0, 255],
-        );
-        print('📳 Vibration triggered successfully');
+      // Check if vibration is available
+      bool? hasVibrator = await Vibration.hasVibrator();
+      print('📱 Device has vibrator: $hasVibrator');
+
+      if (hasVibrator == true) {
+        print('📳 Starting emergency vibration pattern...');
+
+        // Try simple vibration first
+        try {
+          await Vibration.vibrate(duration: 2000);
+          print('✅ Simple vibration successful');
+        } catch (e) {
+          print('❌ Simple vibration failed: $e');
+        }
+
+        // Wait a moment
+        await Future.delayed(Duration(milliseconds: 300));
+
+        // Try pattern vibration
+        try {
+          await Vibration.vibrate(
+            pattern: [0, 500, 200, 500, 200, 500],
+            intensities: [0, 255, 0, 255, 0, 255],
+          );
+          print('✅ Pattern vibration successful');
+        } catch (e) {
+          print('❌ Pattern vibration failed: $e');
+        }
       } else {
-        print('❌ No vibrator available');
+        print('❌ No vibrator available on this device');
+
+        // Try fallback vibration anyway
+        try {
+          await Vibration.vibrate();
+          print('✅ Fallback basic vibration worked');
+        } catch (e) {
+          print('❌ Even basic vibration failed: $e');
+        }
       }
     } catch (e) {
-      print('❌ Vibration failed: $e');
+      print('❌ Vibration setup failed: $e');
     }
+  }
+
+  // Manual test function for debugging
+  static Future<void> testVibration() async {
+    print('🧪 Testing vibration manually...');
+    await triggerDrowsinessAlert();
   }
 
   // Test API connectivity

@@ -107,13 +107,26 @@ class _MjpegViewerState extends State<MjpegViewer> {
         });
 
         print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
+        print('🎯 Is Drowsy: ${result.isDrowsy}');
+
+        // Debug: Log all detection boxes
+        for (var box in result.detectionBoxes) {
+          print(
+              '📦 Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
+        }
 
         if (result.isDrowsy) {
-          print('🚨 DROWSINESS DETECTED!');
+          print('🚨 DROWSINESS DETECTED! Triggering alerts...');
+
+          // Trigger vibration immediately
           await DrowsinessDetector.triggerDrowsinessAlert();
 
+          // Call the callback if provided
           if (widget.onDrowsinessDetected != null) {
+            print('📞 Calling drowsiness callback...');
             widget.onDrowsinessDetected!(result);
+          } else {
+            print('❌ No drowsiness callback provided');
           }
         } else {
           print('✅ Driver appears alert');
@@ -370,12 +383,31 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final width = detection.width * scaleX;
       final height = detection.height * scaleY;
 
+      // Ensure bounds are within screen
+      final adjustedLeft = left < 0
+          ? 0.0
+          : (left + width > constraints.maxWidth
+              ? constraints.maxWidth - width
+              : left);
+      final adjustedTop = top < 0 ? 0.0 : top;
+      final adjustedWidth =
+          width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
+
+      // Create very short label text to prevent overflow
+      final shortClassName = detection.className.length > 3
+          ? detection.className.substring(0, 3)
+          : detection.className;
+      final confidenceText = '${(detection.confidence * 100).toInt()}%';
+
       return Positioned(
-        left: left,
-        top: top,
+        left: adjustedLeft,
+        top: adjustedTop,
         child: Container(
-          width: width,
-          height: height,
+          width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          constraints: BoxConstraints(
+            maxWidth: constraints.maxWidth - 20,
+            minWidth: 40,
+          ),
           decoration: BoxDecoration(
             border: Border.all(
               color: detection.isDrowsy ? Colors.red : Colors.green,
@@ -383,28 +415,26 @@ class _MjpegViewerState extends State<MjpegViewer> {
             ),
             borderRadius: BorderRadius.circular(4),
           ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-                decoration: BoxDecoration(
-                  color: detection.isDrowsy ? Colors.red : Colors.green,
-                  borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(2),
-                    topRight: Radius.circular(2),
-                  ),
-                ),
-                child: Text(
-                  '${detection.className} ${(detection.confidence * 100).toInt()}%',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 10,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            decoration: BoxDecoration(
+              color: detection.isDrowsy ? Colors.red : Colors.green,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(2),
+                topRight: Radius.circular(2),
               ),
-            ],
+            ),
+            child: Text(
+              '$shortClassName $confidenceText',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              softWrap: false,
+            ),
           ),
         ),
       );
