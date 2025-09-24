@@ -1,13 +1,17 @@
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import '../services/drowsiness_service.dart';
 
 class MjpegViewer extends StatefulWidget {
   final String stream;
   final bool isLive;
   final Widget Function(BuildContext, Object, StackTrace?)? error;
   final Widget? loading;
+  final bool enableDrowsinessDetection;
+  final Function(DrowsinessResult)? onDrowsinessDetected;
 
   const MjpegViewer({
     Key? key,
@@ -15,6 +19,8 @@ class MjpegViewer extends StatefulWidget {
     this.isLive = true,
     this.error,
     this.loading,
+    this.enableDrowsinessDetection = false,
+    this.onDrowsinessDetected,
   }) : super(key: key);
 
   @override
@@ -27,10 +33,19 @@ class _MjpegViewerState extends State<MjpegViewer> {
   bool _isLoading = true;
   String? _error;
 
+  Timer? _detectionTimer;
+  bool _isAnalyzing = false;
+  List<DetectionBox> _detectionBoxes = [];
+  Size? _imageSize;
+
   @override
   void initState() {
     super.initState();
     _startStream();
+
+    if (widget.enableDrowsinessDetection) {
+      _startDrowsinessDetection();
+    }
   }
 
   @override
@@ -40,12 +55,94 @@ class _MjpegViewerState extends State<MjpegViewer> {
       _stopStream();
       _startStream();
     }
+
+    if (widget.enableDrowsinessDetection &&
+        !oldWidget.enableDrowsinessDetection) {
+      _startDrowsinessDetection();
+    } else if (!widget.enableDrowsinessDetection &&
+        oldWidget.enableDrowsinessDetection) {
+      _stopDrowsinessDetection();
+    }
   }
 
   @override
   void dispose() {
     _stopStream();
+    _stopDrowsinessDetection();
     super.dispose();
+  }
+
+  void _startDrowsinessDetection() {
+    // Reduced to 3 seconds for faster detection
+    _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
+      if (_currentFrame != null && !_isAnalyzing) {
+        _analyzeCurrentFrame();
+      }
+    });
+  }
+
+  void _stopDrowsinessDetection() {
+    _detectionTimer?.cancel();
+    _detectionTimer = null;
+    setState(() {
+      _detectionBoxes.clear();
+    });
+  }
+
+  Future<void> _analyzeCurrentFrame() async {
+    if (_currentFrame == null || _isAnalyzing) return;
+
+    setState(() {
+      _isAnalyzing = true;
+    });
+
+    try {
+      print('🔍 Analyzing frame for drowsiness...');
+
+      final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
+
+      if (result != null && mounted) {
+        setState(() {
+          _detectionBoxes = result.detectionBoxes;
+        });
+
+        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
+        print('🎯 Is Drowsy: ${result.isDrowsy}');
+
+        // Debug: Log all detection boxes
+        for (var box in result.detectionBoxes) {
+          print(
+              '📦 Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
+        }
+
+        if (result.isDrowsy) {
+          print('🚨 DROWSINESS DETECTED! Triggering alerts...');
+
+          // Trigger vibration immediately
+          await DrowsinessDetector.triggerDrowsinessAlert();
+
+          // Call the callback if provided
+          if (widget.onDrowsinessDetected != null) {
+            print('📞 Calling drowsiness callback...');
+            widget.onDrowsinessDetected!(result);
+          } else {
+            print('❌ No drowsiness callback provided');
+          }
+        } else {
+          print('✅ Driver appears alert');
+        }
+      } else {
+        print('❌ Analysis failed - no result');
+      }
+    } catch (e) {
+      print('❌ Frame analysis error: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isAnalyzing = false;
+        });
+      }
+    }
   }
 
   void _startStream() {
@@ -64,6 +161,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             _isLoading = false;
             _error = null;
           });
+          _getImageSize(frame);
         }
       },
       onError: (error) {
@@ -77,6 +175,19 @@ class _MjpegViewerState extends State<MjpegViewer> {
     );
   }
 
+  Future<void> _getImageSize(Uint8List imageBytes) async {
+    try {
+      final codec = await ui.instantiateImageCodec(imageBytes);
+      final frame = await codec.getNextFrame();
+      setState(() {
+        _imageSize =
+            Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+      });
+    } catch (e) {
+      print('Error getting image size: $e');
+    }
+  }
+
   void _stopStream() {
     _subscription?.cancel();
     _subscription = null;
@@ -84,109 +195,55 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
   Stream<Uint8List> _mjpegStream(String url) async* {
     try {
-      print('📺 Starting MJPEG stream from: $url');
-
       final client = http.Client();
       final request = http.Request('GET', Uri.parse(url));
-      request.headers.addAll({
-        'Connection': 'close',
-        'Cache-Control': 'no-cache',
-        'Accept': 'multipart/x-mixed-replace,image/jpeg',
-      });
 
       final response = await client.send(request);
-      print('📡 Stream response status: ${response.statusCode}');
-      print('📋 Stream headers: ${response.headers}');
 
       if (response.statusCode != 200) {
         throw Exception(
             'HTTP ${response.statusCode}: Failed to connect to stream');
       }
 
-      // Handle different boundary formats
-      String? contentType = response.headers['content-type'];
-      String boundary = '123456789000000000000987654321'; // Default boundary
-
-      if (contentType != null && contentType.contains('boundary=')) {
-        final boundaryMatch =
-            RegExp(r'boundary=([^;,\s]+)').firstMatch(contentType);
-        if (boundaryMatch != null) {
-          boundary = boundaryMatch.group(1)!;
-          print('📌 Detected boundary: $boundary');
-        }
-      }
-
+      const boundary = '123456789000000000000987654321';
       List<int> buffer = [];
       bool inImage = false;
-      int imageCount = 0;
 
       await for (List<int> chunk in response.stream) {
         buffer.addAll(chunk);
 
         if (!inImage) {
-          // Look for start of image data
           String bufferStr = String.fromCharCodes(buffer);
-          int headerEnd = bufferStr.indexOf('\r\n\r\n');
+          int startIndex = bufferStr.indexOf('\r\n\r\n');
 
-          if (headerEnd != -1) {
+          if (startIndex != -1) {
             inImage = true;
-            buffer = buffer.sublist(headerEnd + 4);
-            print('📸 Starting image ${++imageCount}');
+            buffer = buffer.sublist(startIndex + 4);
           }
         }
 
         if (inImage) {
-          // Look for end of image (next boundary or JPEG end marker)
           String bufferStr = String.fromCharCodes(buffer);
-          int boundaryIndex = bufferStr.indexOf('--$boundary');
-
-          // Also look for JPEG end marker
-          List<int> jpegEnd = [0xFF, 0xD9];
-          int jpegEndIndex = -1;
-          for (int i = 0; i < buffer.length - 1; i++) {
-            if (buffer[i] == jpegEnd[0] && buffer[i + 1] == jpegEnd[1]) {
-              jpegEndIndex = i + 2;
-              break;
-            }
-          }
-
-          int endIndex = -1;
-          if (boundaryIndex != -1 && jpegEndIndex != -1) {
-            endIndex =
-                jpegEndIndex < boundaryIndex ? jpegEndIndex : boundaryIndex;
-          } else if (jpegEndIndex != -1) {
-            endIndex = jpegEndIndex;
-          } else if (boundaryIndex != -1) {
-            endIndex = boundaryIndex;
-          }
+          int endIndex = bufferStr.indexOf(boundary);
 
           if (endIndex != -1) {
-            // Extract image data
             List<int> imageData = buffer.sublist(0, endIndex);
 
-            if (imageData.length > 100) {
-              // Ensure it's a valid image
-              print(
-                  '✅ Yielding image ${imageCount}, size: ${imageData.length} bytes');
+            if (imageData.isNotEmpty) {
               yield Uint8List.fromList(imageData);
             }
 
-            // Reset for next image
-            buffer = buffer.sublist(endIndex);
+            buffer = buffer.sublist(endIndex + boundary.length);
             inImage = false;
           }
         }
 
-        // Prevent buffer from growing too large
-        if (buffer.length > 2 * 1024 * 1024) {
-          // 2MB limit
-          print('⚠️ Buffer too large, resetting...');
+        if (buffer.length > 1024 * 1024) {
           buffer.clear();
           inImage = false;
         }
       }
     } catch (e) {
-      print('❌ MJPEG stream error: $e');
       yield* Stream.error(e);
     }
   }
@@ -199,22 +256,13 @@ class _MjpegViewerState extends State<MjpegViewer> {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(
-                  Icons.error_outline,
-                  size: 48,
-                  color: Colors.red[300],
-                ),
+                Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
                 const SizedBox(height: 16),
-                Text(
-                  'Stream Error',
-                  style: TextStyle(color: Colors.white, fontSize: 16),
-                ),
+                Text('Stream Error',
+                    style: TextStyle(color: Colors.white, fontSize: 16)),
                 const SizedBox(height: 8),
-                Text(
-                  _error!,
-                  style: TextStyle(color: Colors.white70, fontSize: 12),
-                  textAlign: TextAlign.center,
-                ),
+                Text(_error!,
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
               ],
             ),
           );
@@ -228,10 +276,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
               children: [
                 CircularProgressIndicator(color: Colors.white),
                 SizedBox(height: 16),
-                Text(
-                  'Connecting to camera...',
-                  style: TextStyle(color: Colors.white),
-                ),
+                Text('Connecting to camera...',
+                    style: TextStyle(color: Colors.white)),
               ],
             ),
           );
@@ -239,36 +285,159 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
     if (_currentFrame == null) {
       return const Center(
-        child: Text(
-          'No video data',
-          style: TextStyle(color: Colors.white),
-        ),
+        child: Text('No video data', style: TextStyle(color: Colors.white)),
       );
     }
 
-    return Image.memory(
-      _currentFrame!,
-      fit: BoxFit.cover,
-      gaplessPlayback: true,
-      errorBuilder: (context, error, stackTrace) {
-        return Center(
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(
-                Icons.broken_image,
-                size: 48,
-                color: Colors.red[300],
+    return Stack(
+      children: [
+        // Video feed
+        LayoutBuilder(
+          builder: (context, constraints) {
+            return Stack(
+              children: [
+                Image.memory(
+                  _currentFrame!,
+                  fit: BoxFit.cover,
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  gaplessPlayback: true,
+                ),
+
+                // Detection overlay
+                if (widget.enableDrowsinessDetection &&
+                    _detectionBoxes.isNotEmpty)
+                  ...buildDetectionOverlay(constraints),
+              ],
+            );
+          },
+        ),
+
+        // AI Status indicator
+        if (widget.enableDrowsinessDetection)
+          Positioned(
+            top: 10,
+            left: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: _isAnalyzing ? Colors.orange : Colors.green,
+                borderRadius: BorderRadius.circular(12),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'Image Error',
-                style: TextStyle(color: Colors.white),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    _isAnalyzing ? Icons.psychology : Icons.visibility,
+                    color: Colors.white,
+                    size: 16,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    _isAnalyzing ? 'Analyzing...' : 'AI Active',
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
               ),
-            ],
+            ),
           ),
-        );
-      },
+
+        // Detection count
+        if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.black54,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                'Detections: ${_detectionBoxes.length}',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
+  }
+
+  List<Widget> buildDetectionOverlay(BoxConstraints constraints) {
+    if (_imageSize == null) return [];
+
+    final scaleX = constraints.maxWidth / _imageSize!.width;
+    final scaleY = constraints.maxHeight / _imageSize!.height;
+
+    return _detectionBoxes.map((detection) {
+      final left = detection.x * scaleX;
+      final top = detection.y * scaleY;
+      final width = detection.width * scaleX;
+      final height = detection.height * scaleY;
+
+      // Ensure bounds are within screen
+      final adjustedLeft = left < 0
+          ? 0.0
+          : (left + width > constraints.maxWidth
+              ? constraints.maxWidth - width
+              : left);
+      final adjustedTop = top < 0 ? 0.0 : top;
+      final adjustedWidth =
+          width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
+
+      // Create very short label text to prevent overflow
+      final shortClassName = detection.className.length > 3
+          ? detection.className.substring(0, 3)
+          : detection.className;
+      final confidenceText = '${(detection.confidence * 100).toInt()}%';
+
+      return Positioned(
+        left: adjustedLeft,
+        top: adjustedTop,
+        child: Container(
+          width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          constraints: BoxConstraints(
+            maxWidth: constraints.maxWidth - 20,
+            minWidth: 40,
+          ),
+          decoration: BoxDecoration(
+            border: Border.all(
+              color: detection.isDrowsy ? Colors.red : Colors.green,
+              width: 2,
+            ),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            decoration: BoxDecoration(
+              color: detection.isDrowsy ? Colors.red : Colors.green,
+              borderRadius: BorderRadius.only(
+                topLeft: Radius.circular(2),
+                topRight: Radius.circular(2),
+              ),
+            ),
+            child: Text(
+              '$shortClassName $confidenceText',
+              style: TextStyle(
+                color: Colors.white,
+                fontSize: 9,
+                fontWeight: FontWeight.bold,
+              ),
+              maxLines: 1,
+              overflow: TextOverflow.clip,
+              softWrap: false,
+            ),
+          ),
+        ),
+      );
+    }).toList();
   }
 }
