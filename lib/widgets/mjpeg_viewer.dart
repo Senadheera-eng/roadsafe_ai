@@ -73,7 +73,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    _detectionTimer = Timer.periodic(Duration(seconds: 5), (timer) {
+    // Reduced to 3 seconds for faster detection
+    _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
