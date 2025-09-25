@@ -304,7 +304,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
                   gaplessPlayback: true,
                 ),
 
-                // Detection overlay
+                // Detection overlay - ALWAYS show when detection is enabled (not just when drowsy)
                 if (widget.enableDrowsinessDetection &&
                     _detectionBoxes.isNotEmpty)
                   ...buildDetectionOverlay(constraints),
@@ -313,7 +313,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
           },
         ),
 
-        // AI Status indicator
+        // AI Status indicator - show when ANY detection is happening
         if (widget.enableDrowsinessDetection)
           Positioned(
             top: 10,
@@ -334,7 +334,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    _isAnalyzing ? 'Analyzing...' : 'AI Active',
+                    _isAnalyzing ? 'Scanning Eyes...' : 'Eye Tracking Active',
                     style: TextStyle(
                       color: Colors.white,
                       fontSize: 12,
@@ -346,8 +346,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
             ),
           ),
 
-        // Detection count
-        if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+        // Detection count - show total detections
+        if (widget.enableDrowsinessDetection)
           Positioned(
             top: 10,
             right: 10,
@@ -358,7 +358,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
                 borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
-                'Detections: ${_detectionBoxes.length}',
+                'Eyes: ${_detectionBoxes.length}',
                 style: TextStyle(
                   color: Colors.white,
                   fontSize: 12,
@@ -393,47 +393,65 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final adjustedWidth =
           width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
 
-      // Create very short label text to prevent overflow
-      final shortClassName = detection.className.length > 3
-          ? detection.className.substring(0, 3)
-          : detection.className;
-      final confidenceText = '${(detection.confidence * 100).toInt()}%';
+      // Display eye state and percentage clearly
+      String displayText = '';
+      Color boxColor = Colors.blue; // Default color
+      Color textBgColor = Colors.blue;
+
+      if (detection.className.contains('open')) {
+        displayText = 'OPEN ${(detection.confidence * 100).toInt()}%';
+        boxColor = Colors.green;
+        textBgColor = Colors.green;
+      } else if (detection.className.contains('close')) {
+        displayText = 'CLOSED ${(detection.confidence * 100).toInt()}%';
+        boxColor = Colors.red;
+        textBgColor = Colors.red;
+      } else if (detection.className.contains('yawn')) {
+        displayText = 'YAWN ${(detection.confidence * 100).toInt()}%';
+        boxColor = Colors.orange;
+        textBgColor = Colors.orange;
+      } else {
+        displayText =
+            '${detection.className.toUpperCase()} ${(detection.confidence * 100).toInt()}%';
+        boxColor = detection.isDrowsy ? Colors.red : Colors.green;
+        textBgColor = detection.isDrowsy ? Colors.red : Colors.green;
+      }
 
       return Positioned(
         left: adjustedLeft,
         top: adjustedTop,
         child: Container(
-          width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          width: adjustedWidth < 60 ? 60 : adjustedWidth,
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth - 20,
-            minWidth: 40,
+            minWidth: 60,
           ),
           decoration: BoxDecoration(
             border: Border.all(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: boxColor,
               width: 2,
             ),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: textBgColor,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(2),
                 topRight: Radius.circular(2),
               ),
             ),
             child: Text(
-              '$shortClassName $confidenceText',
+              displayText,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
               maxLines: 1,
               overflow: TextOverflow.clip,
-              softWrap: false,
+              textAlign: TextAlign.center,
             ),
           ),
         ),
