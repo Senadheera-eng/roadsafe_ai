@@ -26,41 +26,38 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
-    // Extract bounding box coordinates
+    // Debug: Print what your model actually returns
+    print(
+        'Raw detection: class="$className", confidence=${(confidence * 100).toInt()}%');
+
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
-    // Enhanced drowsiness detection - check for multiple possible class names
+    // Enhanced drowsiness detection based on common class names
     bool isDrowsy = false;
 
-    if (confidence > 0.2) {
-      // Lower threshold to catch more detections
-      // Check for various drowsiness indicators the model might return
-      if (className.contains('close') || // "closed", "close", "eye_close"
-          className.contains('shut') || // "shut", "eye_shut"
-          className.contains('drowsy') || // "drowsy"
-          className.contains('sleepy') || // "sleepy"
-          className.contains('tired') || // "tired"
-          className.contains('yawn') || // "yawn", "yawning"
-          className.contains('blink') || // "blink", "long_blink"
-          className.contains('nod')) {
-        // "head_nod", "nodding"
+    if (confidence > 0.3) {
+      // Check for drowsiness indicators - update these based on console debug output
+      if (className.contains('drowsy') ||
+          className.contains('closed') ||
+          className.contains('close') ||
+          className.contains('sleepy') ||
+          className.contains('tired') ||
+          className.contains('yawn') ||
+          className.contains('blink') ||
+          className.contains('shut') ||
+          className == 'eyes_closed' ||
+          className == 'closed_eyes' ||
+          className == 'eye_closed') {
         isDrowsy = true;
         print(
-            '✅ Drowsiness detected in DetectionBox: "$className" at ${(confidence * 100).toInt()}%');
-      } else if (className.contains('open')) {
-        isDrowsy = false; // Open eyes are definitely NOT drowsy
-        print(
-            '👀 Alert state: Open eyes detected - "$className" at ${(confidence * 100).toInt()}%');
-      } else {
-        print(
-            '❓ Unknown class detected: "$className" at ${(confidence * 100).toInt()}%');
+            'DROWSY STATE DETECTED: $className at ${(confidence * 100).toInt()}%');
+      } else if (className.contains('open') || className.contains('alert')) {
+        isDrowsy = false;
+        print('ALERT STATE: $className at ${(confidence * 100).toInt()}%');
       }
-    } else {
-      print(
-          '📉 Low confidence detection ignored: "$className" at ${(confidence * 100).toInt()}%');
     }
 
     return DetectionBox(
@@ -82,122 +79,97 @@ class DrowsinessDetector {
 
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
-      print('🔍 Starting drowsiness analysis...');
-      print('📊 Image size: ${imageBytes.length} bytes');
+      print('Starting drowsiness analysis...');
+      print('Image size: ${imageBytes.length} bytes');
 
       // Convert to base64
       String base64Image = base64Encode(imageBytes);
-      print('🔄 Base64 length: ${base64Image.length}');
 
-      // Make API request with lower confidence threshold for better detection
+      // Make API request with optimized parameters
       final response = await http
           .post(
             Uri.parse(
-                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.1&overlap=0.3'),
+                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.3&overlap=0.5'),
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
               'User-Agent': 'RoadSafeAI/1.0',
             },
             body: base64Image,
           )
-          .timeout(
-              Duration(seconds: 10)); // Reduced timeout for faster response
+          .timeout(Duration(seconds: 10));
 
-      print('📡 API Response Status: ${response.statusCode}');
+      print('API Response Status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        print('✅ API call successful');
         final data = json.decode(response.body);
-        print('📋 API Response: $data');
+        print('Full API Response: $data'); // Critical debug line
 
         final result = DrowsinessResult.fromJson(data);
         print(
-            '🎯 Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"} (confidence: ${result.confidence.toStringAsFixed(2)}, boxes: ${result.detectionBoxes.length})');
+            'Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"} - Boxes: ${result.detectionBoxes.length}');
 
-        // Log all detections
+        // Log all detections for debugging
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "⚠️ DROWSY" : "✅ NORMAL"}');
+              'Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "DROWSY" : "NORMAL"}');
         }
 
         return result;
       } else {
-        print('❌ API Error: ${response.statusCode} - ${response.body}');
-
-        // Try to parse error message
-        try {
-          final errorData = json.decode(response.body);
-          print('❌ Error details: $errorData');
-        } catch (e) {
-          print('❌ Raw error response: ${response.body}');
-        }
-
+        print('API Error: ${response.statusCode} - ${response.body}');
         return null;
       }
     } catch (e) {
-      print('🚨 Drowsiness detection error: $e');
+      print('Drowsiness detection error: $e');
       return null;
     }
   }
 
   static Future<void> triggerDrowsinessAlert() async {
-    print('🚨 DROWSINESS DETECTED - Triggering vibration');
+    print('DROWSINESS DETECTED - Triggering vibration');
 
     try {
       // Check if vibration is available
       bool? hasVibrator = await Vibration.hasVibrator();
-      print('📱 Device has vibrator: $hasVibrator');
+      print('Device has vibrator: $hasVibrator');
 
-      if (hasVibrator == true) {
-        print('📳 Starting emergency vibration pattern...');
+      // First vibration - long alert
+      try {
+        await Vibration.vibrate(duration: 2000);
+        print('Long vibration triggered');
+      } catch (e) {
+        print('Long vibration failed: $e');
+      }
 
-        // Try simple vibration first
+      // Wait briefly
+      await Future.delayed(Duration(milliseconds: 300));
+
+      // Second vibration - pattern
+      try {
+        await Vibration.vibrate(
+          pattern: [0, 500, 200, 500, 200, 500],
+          intensities: [0, 255, 0, 255, 0, 255],
+        );
+        print('Pattern vibration triggered');
+      } catch (e) {
+        print('Pattern vibration failed: $e');
+        // Fallback to simple vibration
         try {
-          await Vibration.vibrate(duration: 2000);
-          print('✅ Simple vibration successful');
-        } catch (e) {
-          print('❌ Simple vibration failed: $e');
-        }
-
-        // Wait a moment
-        await Future.delayed(Duration(milliseconds: 300));
-
-        // Try pattern vibration
-        try {
-          await Vibration.vibrate(
-            pattern: [0, 500, 200, 500, 200, 500],
-            intensities: [0, 255, 0, 255, 0, 255],
-          );
-          print('✅ Pattern vibration successful');
-        } catch (e) {
-          print('❌ Pattern vibration failed: $e');
-        }
-      } else {
-        print('❌ No vibrator available on this device');
-
-        // Try fallback vibration anyway
-        try {
-          await Vibration.vibrate();
-          print('✅ Fallback basic vibration worked');
-        } catch (e) {
-          print('❌ Even basic vibration failed: $e');
+          await Vibration.vibrate(duration: 1000);
+          print('Fallback vibration successful');
+        } catch (fallbackError) {
+          print('All vibration methods failed: $fallbackError');
         }
       }
     } catch (e) {
-      print('❌ Vibration setup failed: $e');
+      print('Vibration setup failed: $e');
     }
-  }
-
-  // Manual test function for debugging
-  static Future<void> testVibration() async {
-    print('🧪 Testing vibration manually...');
-    await triggerDrowsinessAlert();
   }
 
   // Test API connectivity
   static Future<bool> testAPIConnection() async {
     try {
-      print('🔗 Testing API connection...');
+      print('Testing API connection...');
 
       final response = await http
           .get(
@@ -205,18 +177,18 @@ class DrowsinessDetector {
           )
           .timeout(Duration(seconds: 10));
 
-      print('📡 API Test Response: ${response.statusCode}');
+      print('API Test Response: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 400) {
         // 400 is expected for GET request without image data
-        print('✅ API connection successful');
+        print('API connection successful');
         return true;
       } else {
-        print('❌ API connection failed: ${response.statusCode}');
+        print('API connection failed: ${response.statusCode}');
         return false;
       }
     } catch (e) {
-      print('❌ API connection error: $e');
+      print('API connection error: $e');
       return false;
     }
   }
@@ -241,61 +213,34 @@ class DrowsinessResult {
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
 
-    print('🔍 Parsing API response...');
+    print('Parsing API response...');
 
     if (json['predictions'] != null) {
       final predictions = json['predictions'] as List;
       totalPredictions = predictions.length;
 
-      print('📊 Found ${totalPredictions} predictions');
-      print('📋 Raw predictions: $predictions');
+      print('Found ${totalPredictions} predictions');
 
       for (var pred in predictions) {
         try {
-          final className = (pred['class'] ?? '').toString().toLowerCase();
-          final confidence = (pred['confidence'] ?? 0.0).toDouble();
-
-          print(
-              '🎯 Raw Prediction: "$className" (confidence: ${(confidence * 100).toInt()}%)');
-
           final box = DetectionBox.fromJson(pred);
           detectionBoxes.add(box);
 
-          // Check for ANY drowsiness indicators with lower threshold
-          bool isThisDrowsy = false;
-
-          if (confidence > 0.2) {
-            // Lower threshold to catch more
-            // Check for various possible drowsiness class names
-            if (className.contains('close') || // "closed", "close"
-                className.contains('shut') || // "shut"
-                className.contains('drowsy') ||
-                className.contains('sleepy') ||
-                className.contains('tired') ||
-                className.contains('yawn') ||
-                className.contains('blink') || // long blinks
-                className.contains('nod')) {
-              // head nodding
-              isThisDrowsy = true;
-              print(
-                  '⚠️ DROWSINESS INDICATOR FOUND: "$className" at ${(confidence * 100).toInt()}%');
-            }
-          }
-
-          if (isThisDrowsy) {
+          // Check if this detection indicates drowsiness
+          if (box.isDrowsy) {
             isDrowsy = true;
-            if (confidence > maxConfidence) {
-              maxConfidence = confidence;
+            if (box.confidence > maxConfidence) {
+              maxConfidence = box.confidence;
             }
+            print(
+                'DROWSINESS INDICATOR: ${box.className} at ${(box.confidence * 100).toInt()}%');
           }
         } catch (e) {
-          print('❌ Error parsing detection box: $e');
-          print('📋 Raw prediction data: $pred');
+          print('Error parsing detection box: $e');
         }
       }
     } else {
-      print('❌ No predictions found in response');
-      print('📋 Full response: $json');
+      print('No predictions found in response');
     }
 
     final result = DrowsinessResult(
@@ -306,10 +251,8 @@ class DrowsinessResult {
     );
 
     print(
-        '📋 Final result: ${result.isDrowsy ? "🚨 DROWSY" : "✅ ALERT"} with ${result.detectionBoxes.length} detection boxes');
-    if (result.isDrowsy) {
-      print('🚨 DROWSINESS CONFIRMED - SHOULD VIBRATE NOW!');
-    }
+        'Final result: ${result.isDrowsy ? "DROWSY DETECTED" : "ALERT STATE"} with ${result.detectionBoxes.length} detection boxes');
+
     return result;
   }
 }

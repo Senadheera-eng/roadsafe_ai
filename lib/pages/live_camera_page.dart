@@ -138,7 +138,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _lastDetectionResult = result;
     });
 
-    _showMessage('DROWSINESS DETECTED! Phone is vibrating.', AppColors.error);
+    _showMessage('DROWSINESS DETECTED! Phone vibrating for your safety.',
+        AppColors.error);
 
     // Show detailed detection info
     final drowsyBoxes =
@@ -486,6 +487,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     _cameraService.disconnect();
                     setState(() {
                       _isAPITested = false;
+                      _isDrowsinessDetectionEnabled = false;
                     });
                   },
                   icon: Icon(
@@ -570,8 +572,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
                     _showMessage(
                       value
-                          ? 'AI Drowsiness Detection Enabled - You should see detection boxes'
-                          : 'AI Drowsiness Detection Disabled',
+                          ? 'AI Eye Detection Enabled - Squares will appear around detected eyes'
+                          : 'AI Eye Detection Disabled',
                       value ? AppColors.success : AppColors.warning,
                     );
                   },
@@ -586,7 +588,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
         Container(
           width: double.infinity,
-          height: 400, // Increased height for better visibility
+          height: 400,
           decoration: BoxDecoration(
             color: Colors.black,
             borderRadius: BorderRadius.circular(20),
@@ -690,7 +692,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  'Detections: ${_lastDetectionResult!.detectionBoxes.length}',
+                  'Eye detections: ${_lastDetectionResult!.detectionBoxes.length}',
                   style: AppTextStyles.bodySmall,
                 ),
                 if (_lastDetectionResult!.detectionBoxes.isNotEmpty) ...[
@@ -746,9 +748,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             const SizedBox(width: 12),
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: () {
-                  _cameraService.testConnection();
-                  _testAPIConnection();
+                onPressed: () async {
+                  await _cameraService.testConnection();
+                  await _testAPIConnection();
+                  _showMessage('Connection and API tested!', AppColors.info);
                 },
                 icon: const Icon(Icons.refresh_rounded),
                 label: const Text('Test'),
