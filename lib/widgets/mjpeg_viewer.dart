@@ -73,7 +73,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Reduced to 3 seconds for faster detection
+    // Check every 3 seconds
     _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
@@ -84,6 +84,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
+    DrowsinessDetector.resetClosedEyeTimer();
     setState(() {
       _detectionBoxes.clear();
     });
@@ -97,7 +98,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      print('🔍 Analyzing frame for drowsiness...');
+      print('Analyzing frame for drowsiness...');
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
@@ -106,36 +107,35 @@ class _MjpegViewerState extends State<MjpegViewer> {
           _detectionBoxes = result.detectionBoxes;
         });
 
-        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
-        print('🎯 Is Drowsy: ${result.isDrowsy}');
+        print('Analysis complete - Predictions: ${result.totalPredictions}');
+        print('Is Drowsy: ${result.isDrowsy}');
+        print('Closed eye duration: ${result.closedEyeDurationSeconds}s');
 
         // Debug: Log all detection boxes
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
+              'Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
         }
 
         if (result.isDrowsy) {
-          print('🚨 DROWSINESS DETECTED! Triggering alerts...');
+          print('DROWSINESS DETECTED! Triggering alerts...');
 
-          // Trigger vibration immediately
+          // Trigger vibration
           await DrowsinessDetector.triggerDrowsinessAlert();
 
-          // Call the callback if provided
+          // Call the callback
           if (widget.onDrowsinessDetected != null) {
-            print('📞 Calling drowsiness callback...');
+            print('Calling drowsiness callback...');
             widget.onDrowsinessDetected!(result);
-          } else {
-            print('❌ No drowsiness callback provided');
           }
         } else {
-          print('✅ Driver appears alert');
+          print('Driver appears alert');
         }
       } else {
-        print('❌ Analysis failed - no result');
+        print('Analysis failed - no result');
       }
     } catch (e) {
-      print('❌ Frame analysis error: $e');
+      print('Frame analysis error: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -393,47 +393,49 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final adjustedWidth =
           width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
 
-      // Create very short label text to prevent overflow
-      final shortClassName = detection.className.length > 3
-          ? detection.className.substring(0, 3)
-          : detection.className;
-      final confidenceText = '${(detection.confidence * 100).toInt()}%';
+      // Determine box color based on isDrowsy flag
+      final boxColor = detection.isDrowsy ? Colors.red : Colors.green;
+
+      // Create label text
+      final labelText =
+          '${detection.className} ${(detection.confidence * 100).toInt()}%';
 
       return Positioned(
         left: adjustedLeft,
         top: adjustedTop,
         child: Container(
           width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          height: height < 20 ? 20 : height,
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth - 20,
             minWidth: 40,
+            minHeight: 20,
           ),
           decoration: BoxDecoration(
             border: Border.all(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: boxColor,
               width: 2,
             ),
             borderRadius: BorderRadius.circular(4),
           ),
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: boxColor,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(2),
                 topRight: Radius.circular(2),
               ),
             ),
             child: Text(
-              '$shortClassName $confidenceText',
+              labelText,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
               maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
