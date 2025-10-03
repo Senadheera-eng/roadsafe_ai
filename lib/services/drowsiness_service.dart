@@ -26,46 +26,59 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
-    // Extract bounding box coordinates
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
-    // Enhanced drowsiness detection - check for multiple possible class names
     bool isDrowsy = false;
 
-    if (confidence > 0.2) {
-      // Lower threshold to catch more detections
-      // Check for various drowsiness indicators the model might return
-      if (className.contains('close') || // "closed", "close", "eye_close"
-          className.contains('shut') || // "shut", "eye_shut"
-          className.contains('drowsy') || // "drowsy"
-          className.contains('sleepy') || // "sleepy"
-          className.contains('tired') || // "tired"
-          className.contains('yawn') || // "yawn", "yawning"
-          className.contains('blink') || // "blink", "long_blink"
-          className.contains('nod')) {
-        // "head_nod", "nodding"
+    print('Detection: class="$className" conf=${(confidence * 100).toInt()}%');
+
+    // LOWERED confidence threshold for better sensitivity (0.20 instead of 0.25)
+    if (confidence > 0.20) {
+      // Priority 1: CLOSED eyes (most important indicator)
+      if (className.contains('clos') || className.contains('shut')) {
         isDrowsy = true;
         print(
-            '✅ Drowsiness detected in DetectionBox: "$className" at ${(confidence * 100).toInt()}%');
-      } else if (className.contains('open')) {
-        isDrowsy = false; // Open eyes are definitely NOT drowsy
-        print(
-            '👀 Alert state: Open eyes detected - "$className" at ${(confidence * 100).toInt()}%');
+            '  -> DROWSY: Closed eyes (conf: ${(confidence * 100).toInt()}%)');
+      }
+
+      // Priority 2: Yawning (strong drowsiness indicator)
+      else if (className.contains('yawn')) {
+        isDrowsy = true;
+        print('  -> DROWSY: Yawning detected');
+      }
+
+      // Priority 3: Partial closure or drooping (look for low confidence "open")
+      else if (className.contains('open') || className.contains('ope')) {
+        // If "open" detection has LOW confidence, eyes might be partially closed
+        if (confidence < 0.50) {
+          isDrowsy = true;
+          print('  -> DROWSY: Weak open detection (partially closed)');
+        } else {
+          isDrowsy = false;
+          print('  -> ALERT: Fully open eyes');
+        }
+      }
+
+      // Priority 4: Explicit drowsiness keywords
+      else if (className == 'drowsy' ||
+          className == 'sleepy' ||
+          className == 'tired') {
+        isDrowsy = true;
+        print('  -> DROWSY: Fatigue keyword');
       } else {
-        print(
-            '❓ Unknown class detected: "$className" at ${(confidence * 100).toInt()}%');
+        print('  -> UNKNOWN: "${className}"');
       }
     } else {
       print(
-          '📉 Low confidence detection ignored: "$className" at ${(confidence * 100).toInt()}%');
+          '  -> IGNORED: Confidence too low (${(confidence * 100).toInt()}%)');
     }
 
     return DetectionBox(
-      x: x - (width / 2), // Convert center x to top-left x
-      y: y - (height / 2), // Convert center y to top-left y
+      x: x - (width / 2),
+      y: y - (height / 2),
       width: width,
       height: height,
       className: className,
@@ -89,18 +102,18 @@ class DrowsinessDetector {
       String base64Image = base64Encode(imageBytes);
       print('Base64 encoded');
 
-      // Make API request with adjusted confidence threshold
+      // Make API request with LOWER confidence threshold for better sensitivity
       final response = await http
           .post(
             Uri.parse(
-                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.2&overlap=0.3'),
+                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.15&overlap=0.3'),
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
               'User-Agent': 'RoadSafeAI/1.0',
             },
             body: base64Image,
           )
-          .timeout(Duration(seconds: 10));
+          .timeout(Duration(seconds: 8)); // Reduced timeout for faster response
 
       print('API Response Status: ${response.statusCode}');
 
@@ -304,11 +317,12 @@ class DrowsinessResult {
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
 
-    // NEW: Calculate eye opening percentage
+    // Enhanced eye state tracking
     double totalOpenConfidence = 0.0;
     double totalClosedConfidence = 0.0;
     int openCount = 0;
     int closedCount = 0;
+    int yawnCount = 0;
 
     print('Parsing API response...');
 
@@ -316,94 +330,84 @@ class DrowsinessResult {
       final predictions = json['predictions'] as List;
       totalPredictions = predictions.length;
 
-      print('📊 Found ${totalPredictions} predictions');
-      print('📋 Raw predictions: $predictions');
+      print('Found ${totalPredictions} predictions');
 
       for (var pred in predictions) {
         try {
-          final className = (pred['class'] ?? '').toString().toLowerCase();
-          final confidence = (pred['confidence'] ?? 0.0).toDouble();
-
-          print(
-              '🎯 Raw Prediction: "$className" (confidence: ${(confidence * 100).toInt()}%)');
-
           final box = DetectionBox.fromJson(pred);
           detectionBoxes.add(box);
 
-          // Check for ANY drowsiness indicators with lower threshold
-          bool isThisDrowsy = false;
+          final className = box.className.toLowerCase();
 
-          if (confidence > 0.2) {
-            // Lower threshold to catch more
-            // Check for various possible drowsiness class names
-            if (className.contains('close') || // "closed", "close"
-                className.contains('shut') || // "shut"
-                className.contains('drowsy') ||
-                className.contains('sleepy') ||
-                className.contains('tired') ||
-                className.contains('yawn') ||
-                className.contains('blink') || // long blinks
-                className.contains('nod')) {
-              // head nodding
-              isThisDrowsy = true;
-              print(
-                  '⚠️ DROWSINESS INDICATOR FOUND: "$className" at ${(confidence * 100).toInt()}%');
+          // Track eye states with weighted confidence
+          if (className.contains('open') || className.contains('ope')) {
+            // Weight full open eyes higher
+            if (box.confidence > 0.5) {
+              totalOpenConfidence +=
+                  box.confidence * 1.5; // Boost strong open detections
+              openCount++;
+            } else {
+              // Low confidence "open" might be partially closed
+              totalClosedConfidence += (1.0 - box.confidence);
+              closedCount++;
             }
+          } else if (className.contains('clos') || className.contains('shut')) {
+            totalClosedConfidence +=
+                box.confidence * 1.2; // Boost closed detections
+            closedCount++;
+          } else if (className.contains('yawn')) {
+            yawnCount++;
+            totalClosedConfidence += 0.8; // Yawning contributes to drowsiness
           }
 
-          if (isThisDrowsy) {
-            isDrowsy = true;
-            if (confidence > maxConfidence) {
-              maxConfidence = confidence;
-            }
+          if (box.isDrowsy && box.confidence > maxConfidence) {
+            maxConfidence = box.confidence;
           }
         } catch (e) {
-          print('Error parsing detection box: $e');
-          print('Raw prediction data: $pred');
+          print('Error parsing box: $e');
         }
       }
 
-      // Determine drowsiness: closed eyes detected
-      isDrowsy = closedCount > 0 || detectionBoxes.any((box) => box.isDrowsy);
+      // Enhanced drowsiness determination with multiple factors
+      bool hasClosedEyes = closedCount > 0;
+      bool hasYawn = yawnCount > 0;
+      bool hasLowConfidenceOpen =
+          openCount > 0 && (totalOpenConfidence / openCount) < 0.5;
 
-      print('Open eyes: $openCount, Closed eyes: $closedCount');
-      print('DROWSINESS STATUS: ${isDrowsy ? "DROWSY" : "ALERT"}');
-    } else {
-      print('No predictions found in response');
-      print('Full response: $json');
+      isDrowsy = hasClosedEyes || hasYawn || hasLowConfidenceOpen;
+
+      print('Analysis: Open=$openCount Closed=$closedCount Yawn=$yawnCount');
+      print(
+          'Drowsiness factors: ClosedEyes=$hasClosedEyes Yawn=$hasYawn WeakOpen=$hasLowConfidenceOpen');
     }
 
-    // Calculate eye opening percentage (0-100%)
-    double eyeOpenPercentage = 0.0;
+    // Calculate eye opening percentage with improved algorithm
+    double eyeOpenPercentage = 100.0; // Default to fully open
+
     if (openCount > 0 || closedCount > 0) {
-      double avgOpen = openCount > 0 ? (totalOpenConfidence / openCount) : 0.0;
-      double avgClosed =
-          closedCount > 0 ? (totalClosedConfidence / closedCount) : 0.0;
+      double totalWeight = totalOpenConfidence + totalClosedConfidence;
 
-      if (avgOpen + avgClosed > 0) {
-        eyeOpenPercentage = (avgOpen / (avgOpen + avgClosed)) * 100;
-      } else if (openCount > 0) {
-        eyeOpenPercentage = 100.0;
-      } else {
-        eyeOpenPercentage = 0.0;
+      if (totalWeight > 0) {
+        eyeOpenPercentage = (totalOpenConfidence / totalWeight) * 100.0;
+      } else if (closedCount > 0) {
+        eyeOpenPercentage = 0.0; // All closed
       }
+    } else if (closedCount > 0) {
+      eyeOpenPercentage = 0.0;
     }
+
+    // Clamp to 0-100 range
+    eyeOpenPercentage = eyeOpenPercentage.clamp(0.0, 100.0);
 
     print('Eye Opening Percentage: ${eyeOpenPercentage.toStringAsFixed(1)}%');
+    print('FINAL RESULT: ${isDrowsy ? "DROWSY" : "ALERT"}');
 
-    final result = DrowsinessResult(
+    return DrowsinessResult(
       isDrowsy: isDrowsy,
       confidence: maxConfidence,
       totalPredictions: totalPredictions,
       detectionBoxes: detectionBoxes,
       eyeOpenPercentage: eyeOpenPercentage,
     );
-
-    print(
-        '📋 Final result: ${result.isDrowsy ? "🚨 DROWSY" : "✅ ALERT"} with ${result.detectionBoxes.length} detection boxes');
-    if (result.isDrowsy) {
-      print('🚨 DROWSINESS CONFIRMED - SHOULD VIBRATE NOW!');
-    }
-    return result;
   }
 }

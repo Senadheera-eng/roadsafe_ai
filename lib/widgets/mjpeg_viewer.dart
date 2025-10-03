@@ -38,12 +38,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
   List<DetectionBox> _detectionBoxes = [];
   Size? _imageSize;
 
-  // NEW: For 1-second drowsiness detection
+  // Detection settings
   DateTime? _drowsinessStartTime;
-  bool _hasTriggeredAlert = false;
+  bool _isCurrentlyVibrating = false;
+  Timer? _continuousVibrationTimer;
   static const Duration _drowsinessThreshold =
-      Duration(seconds: 1); // Changed to 1 second
+      Duration(milliseconds: 1500); // 1.5 seconds
   double _currentEyeOpenPercentage = 100.0;
+  int _consecutiveDrowsyDetections = 0; // Track consecutive drowsy frames
 
   @override
   void initState() {
@@ -80,8 +82,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Analyze every 2 seconds for faster response
-    _detectionTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+    // Analyze every 1 second for faster detection
+    _detectionTimer = Timer.periodic(Duration(seconds: 1), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -91,11 +93,40 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
+    _stopContinuousVibration();
     _drowsinessStartTime = null;
-    _hasTriggeredAlert = false;
+    _isCurrentlyVibrating = false;
+    _consecutiveDrowsyDetections = 0;
     setState(() {
       _detectionBoxes.clear();
     });
+  }
+
+  void _startContinuousVibration() {
+    if (_isCurrentlyVibrating) return;
+
+    _isCurrentlyVibrating = true;
+    print('🔄 STARTING CONTINUOUS VIBRATION');
+
+    // Vibrate immediately
+    DrowsinessDetector.triggerDrowsinessAlert();
+
+    // Continue vibrating every 2 seconds
+    _continuousVibrationTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+      if (_isCurrentlyVibrating) {
+        print('🔄 REPEATING VIBRATION');
+        DrowsinessDetector.triggerDrowsinessAlert();
+      }
+    });
+  }
+
+  void _stopContinuousVibration() {
+    if (!_isCurrentlyVibrating) return;
+
+    print('🛑 STOPPING CONTINUOUS VIBRATION');
+    _isCurrentlyVibrating = false;
+    _continuousVibrationTimer?.cancel();
+    _continuousVibrationTimer = null;
   }
 
   Future<void> _analyzeCurrentFrame() async {
@@ -106,7 +137,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      print('=== FRAME ANALYSIS START ===');
+      print('');
+      print(
+          '=== FRAME ANALYSIS (${DateTime.now().millisecondsSinceEpoch % 100000}) ===');
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
@@ -116,66 +149,90 @@ class _MjpegViewerState extends State<MjpegViewer> {
           _currentEyeOpenPercentage = result.eyeOpenPercentage;
         });
 
-        print('Predictions: ${result.totalPredictions}');
-        print('Eye Open: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
-        print('Is Drowsy: ${result.isDrowsy}');
+        print(
+            'Predictions: ${result.totalPredictions} | Eyes: ${result.eyeOpenPercentage.toStringAsFixed(1)}% | Drowsy: ${result.isDrowsy}');
 
-        // Log each detection box
-        for (var box in result.detectionBoxes) {
-          print(
-              '  Box: ${box.className} ${(box.confidence * 100).toInt()}% isDrowsy=${box.isDrowsy}');
+        // Enhanced drowsiness detection - multiple criteria
+        bool isDrowsyNow = false;
+
+        // Criterion 1: API says drowsy
+        if (result.isDrowsy) {
+          isDrowsyNow = true;
+          print('  - Criterion 1: Closed eyes detected');
         }
 
-        // SIMPLIFIED LOGIC: Just check if result.isDrowsy is true
-        if (result.isDrowsy) {
+        // Criterion 2: Eye opening percentage very low (< 30%)
+        if (result.eyeOpenPercentage < 30.0) {
+          isDrowsyNow = true;
+          print(
+              '  - Criterion 2: Eye opening too low (${result.eyeOpenPercentage.toStringAsFixed(1)}%)');
+        }
+
+        // Criterion 3: Multiple closed eye detections
+        int closedEyeCount = result.detectionBoxes
+            .where((box) =>
+                box.className.contains('clos') ||
+                box.className.contains('shut'))
+            .length;
+
+        if (closedEyeCount > 0) {
+          isDrowsyNow = true;
+          print('  - Criterion 3: $closedEyeCount closed eye detection(s)');
+        }
+
+        if (isDrowsyNow) {
+          _consecutiveDrowsyDetections++;
+          print(
+              'DROWSY STATE DETECTED (consecutive: $_consecutiveDrowsyDetections)');
+
+          // Start timer on first detection
           if (_drowsinessStartTime == null) {
             _drowsinessStartTime = DateTime.now();
-            _hasTriggeredAlert = false;
             print('DROWSINESS TIMER STARTED');
           } else {
             final duration = DateTime.now().difference(_drowsinessStartTime!);
-            final milliseconds = duration.inMilliseconds;
+            final ms = duration.inMilliseconds;
 
-            print('Timer: ${milliseconds}ms / 1000ms');
+            print('Timer: ${ms}ms / ${_drowsinessThreshold.inMilliseconds}ms');
 
-            if (milliseconds >= 1000 && !_hasTriggeredAlert) {
-              print('');
-              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-              print('VIBRATION TRIGGER CONDITIONS MET!');
-              print('Duration: ${milliseconds}ms');
-              print('Has triggered: $_hasTriggeredAlert');
-              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-              print('');
+            // Trigger after 1.5 seconds
+            if (duration >= _drowsinessThreshold) {
+              if (!_isCurrentlyVibrating) {
+                print('');
+                print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+                print('CRITICAL DROWSINESS ALERT - 1.5 SECONDS EXCEEDED');
+                print('Duration: ${ms}ms');
+                print('Consecutive detections: $_consecutiveDrowsyDetections');
+                print(
+                    'Eye opening: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
+                print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+                print('');
 
-              _hasTriggeredAlert = true;
+                // Start continuous vibration
+                _startContinuousVibration();
 
-              // DIRECT VIBRATION CALL
-              print('Calling triggerDrowsinessAlert()...');
-              try {
-                await DrowsinessDetector.triggerDrowsinessAlert();
-                print('triggerDrowsinessAlert() completed');
-              } catch (e) {
-                print('ERROR calling triggerDrowsinessAlert: $e');
-              }
-
-              // UI Callback
-              if (widget.onDrowsinessDetected != null) {
-                try {
+                // UI Callback
+                if (widget.onDrowsinessDetected != null) {
                   widget.onDrowsinessDetected!(result);
-                  print('UI callback completed');
-                } catch (e) {
-                  print('ERROR in UI callback: $e');
                 }
+              } else {
+                print('Continuous vibration active (${ms}ms total)');
               }
             }
           }
         } else {
-          // Eyes open - reset
-          if (_drowsinessStartTime != null) {
-            print('Eyes opened - timer reset');
+          // Eyes open - reset everything
+          if (_drowsinessStartTime != null ||
+              _consecutiveDrowsyDetections > 0) {
+            print('EYES OPENED - Resetting all timers');
+            if (_isCurrentlyVibrating) {
+              print('DRIVER WOKE UP - Stopping vibration');
+            }
           }
+
           _drowsinessStartTime = null;
-          _hasTriggeredAlert = false;
+          _consecutiveDrowsyDetections = 0;
+          _stopContinuousVibration();
         }
       }
     } catch (e, stackTrace) {
@@ -435,7 +492,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
         // Timer indicator (shows when drowsiness is being tracked)
         if (widget.enableDrowsinessDetection &&
             _drowsinessStartTime != null &&
-            !_hasTriggeredAlert)
+            !_isCurrentlyVibrating)
           Positioned(
             top: 10,
             right: 10,
@@ -494,6 +551,48 @@ class _MjpegViewerState extends State<MjpegViewer> {
                   fontSize: 12,
                   fontWeight: FontWeight.bold,
                 ),
+              ),
+            ),
+          ),
+        // Vibration status indicator
+        if (widget.enableDrowsinessDetection && _isCurrentlyVibrating)
+          Positioned(
+            bottom: 10,
+            left: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.red.withOpacity(0.8),
+                    blurRadius: 20,
+                    spreadRadius: 5,
+                  ),
+                ],
+              ),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.white, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Text(
+                      'WAKE UP! DROWSINESS DETECTED',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                  ),
+                  Icon(Icons.warning_amber_rounded,
+                      color: Colors.white, size: 24),
+                ],
               ),
             ),
           ),
