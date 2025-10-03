@@ -82,66 +82,67 @@ class DrowsinessDetector {
 
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
-      print('🔍 Starting drowsiness analysis...');
-      print('📊 Image size: ${imageBytes.length} bytes');
+      print('Starting drowsiness analysis...');
+      print('Image size: ${imageBytes.length} bytes');
 
       // Convert to base64
       String base64Image = base64Encode(imageBytes);
-      print('🔄 Base64 length: ${base64Image.length}');
+      print('Base64 encoded');
 
-      // Make API request with lower confidence threshold for better detection
+      // Make API request with adjusted confidence threshold
       final response = await http
           .post(
             Uri.parse(
-                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.1&overlap=0.3'),
+                '$API_URL/$MODEL_ID?api_key=$API_KEY&confidence=0.2&overlap=0.3'),
             headers: {
               'Content-Type': 'application/x-www-form-urlencoded',
               'User-Agent': 'RoadSafeAI/1.0',
             },
             body: base64Image,
           )
-          .timeout(
-              Duration(seconds: 10)); // Reduced timeout for faster response
+          .timeout(Duration(seconds: 10));
 
-      print('📡 API Response Status: ${response.statusCode}');
+      print('API Response Status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        print('✅ API call successful');
+        print('API call successful');
         final data = json.decode(response.body);
-        print('📋 API Response: $data');
+        print('API Response: $data');
 
         final result = DrowsinessResult.fromJson(data);
         print(
-            '🎯 Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"} (confidence: ${result.confidence.toStringAsFixed(2)}, boxes: ${result.detectionBoxes.length})');
+            'Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"} (confidence: ${result.confidence.toStringAsFixed(2)}, boxes: ${result.detectionBoxes.length})');
 
         // Log all detections
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "⚠️ DROWSY" : "✅ NORMAL"}');
+              'Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "DROWSY" : "NORMAL"}');
         }
 
         return result;
       } else {
-        print('❌ API Error: ${response.statusCode} - ${response.body}');
+        print('API Error: ${response.statusCode} - ${response.body}');
 
-        // Try to parse error message
         try {
           final errorData = json.decode(response.body);
-          print('❌ Error details: $errorData');
+          print('Error details: $errorData');
         } catch (e) {
-          print('❌ Raw error response: ${response.body}');
+          print('Raw error response: ${response.body}');
         }
 
         return null;
       }
     } catch (e) {
-      print('🚨 Drowsiness detection error: $e');
+      print('Drowsiness detection error: $e');
       return null;
     }
   }
 
   static Future<void> triggerDrowsinessAlert() async {
-    print('🚨 DROWSINESS DETECTED - Triggering vibration');
+    print('');
+    print('========================================');
+    print('🚨 DROWSINESS ALERT TRIGGERED!');
+    print('========================================');
 
     try {
       // Check if vibration is available
@@ -149,55 +150,116 @@ class DrowsinessDetector {
       print('📱 Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
-        print('📳 Starting emergency vibration pattern...');
+        print('📳 Starting STRONG vibration pattern...');
 
-        // Try simple vibration first
+        // Try pattern 1: Long continuous vibration
         try {
-          await Vibration.vibrate(duration: 2000);
-          print('✅ Simple vibration successful');
+          print(
+              '  -> Attempt 1: 2-second continuous vibration at max intensity');
+          await Vibration.vibrate(duration: 2000, amplitude: 255);
+          await Future.delayed(Duration(milliseconds: 100));
+          print('  ✅ Vibration pattern 1 completed');
         } catch (e) {
-          print('❌ Simple vibration failed: $e');
+          print('  ❌ Vibration pattern 1 failed: $e');
         }
 
-        // Wait a moment
-        await Future.delayed(Duration(milliseconds: 300));
-
-        // Try pattern vibration
+        // Try pattern 2: Pulsing pattern
         try {
+          print('  -> Attempt 2: Pulsing pattern');
           await Vibration.vibrate(
-            pattern: [0, 500, 200, 500, 200, 500],
-            intensities: [0, 255, 0, 255, 0, 255],
+            pattern: [0, 500, 100, 500, 100, 500, 100, 500],
+            intensities: [0, 255, 0, 255, 0, 255, 0, 255],
           );
-          print('✅ Pattern vibration successful');
+          await Future.delayed(Duration(milliseconds: 100));
+          print('  ✅ Vibration pattern 2 completed');
         } catch (e) {
-          print('❌ Pattern vibration failed: $e');
+          print('  ❌ Vibration pattern 2 failed: $e');
         }
-      } else {
-        print('❌ No vibrator available on this device');
 
-        // Try fallback vibration anyway
+        // Try pattern 3: Emergency SOS pattern
         try {
-          await Vibration.vibrate();
-          print('✅ Fallback basic vibration worked');
+          print('  -> Attempt 3: SOS emergency pattern');
+          await Vibration.vibrate(
+            pattern: [
+              0,
+              200,
+              100,
+              200,
+              100,
+              200,
+              300,
+              500,
+              100,
+              500,
+              100,
+              500,
+              300,
+              200,
+              100,
+              200,
+              100,
+              200
+            ],
+            intensities: [
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255
+            ],
+          );
+          print('  ✅ Vibration pattern 3 (SOS) completed');
         } catch (e) {
-          print('❌ Even basic vibration failed: $e');
+          print('  ❌ Vibration pattern 3 failed: $e');
+        }
+
+        print('✅ ALL VIBRATION PATTERNS COMPLETED');
+      } else {
+        print('⚠️ No vibrator hardware detected');
+
+        // Try basic vibration anyway as fallback
+        try {
+          print('  -> Trying basic fallback vibration...');
+          await Vibration.vibrate();
+          await Future.delayed(Duration(milliseconds: 1000));
+          await Vibration.vibrate();
+          print('  ✅ Fallback vibration worked');
+        } catch (e) {
+          print('  ❌ Even fallback vibration failed: $e');
         }
       }
     } catch (e) {
-      print('❌ Vibration setup failed: $e');
+      print('❌ CRITICAL: Vibration system error: $e');
+      print('Stack: ${StackTrace.current}');
     }
+
+    print('========================================');
+    print('🔔 ALERT SEQUENCE FINISHED');
+    print('========================================');
+    print('');
   }
 
-  // Manual test function for debugging
   static Future<void> testVibration() async {
-    print('🧪 Testing vibration manually...');
+    print('Testing vibration manually...');
     await triggerDrowsinessAlert();
   }
 
-  // Test API connectivity
   static Future<bool> testAPIConnection() async {
     try {
-      print('🔗 Testing API connection...');
+      print('Testing API connection...');
 
       final response = await http
           .get(
@@ -205,18 +267,17 @@ class DrowsinessDetector {
           )
           .timeout(Duration(seconds: 10));
 
-      print('📡 API Test Response: ${response.statusCode}');
+      print('API Test Response: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 400) {
-        // 400 is expected for GET request without image data
-        print('✅ API connection successful');
+        print('API connection successful');
         return true;
       } else {
-        print('❌ API connection failed: ${response.statusCode}');
+        print('API connection failed: ${response.statusCode}');
         return false;
       }
     } catch (e) {
-      print('❌ API connection error: $e');
+      print('API connection error: $e');
       return false;
     }
   }
@@ -227,12 +288,14 @@ class DrowsinessResult {
   final double confidence;
   final int totalPredictions;
   final List<DetectionBox> detectionBoxes;
+  final double eyeOpenPercentage; // NEW: Eye opening percentage
 
   DrowsinessResult({
     required this.isDrowsy,
     required this.confidence,
     required this.totalPredictions,
     required this.detectionBoxes,
+    required this.eyeOpenPercentage,
   });
 
   factory DrowsinessResult.fromJson(Map<String, dynamic> json) {
@@ -241,7 +304,13 @@ class DrowsinessResult {
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
 
-    print('🔍 Parsing API response...');
+    // NEW: Calculate eye opening percentage
+    double totalOpenConfidence = 0.0;
+    double totalClosedConfidence = 0.0;
+    int openCount = 0;
+    int closedCount = 0;
+
+    print('Parsing API response...');
 
     if (json['predictions'] != null) {
       final predictions = json['predictions'] as List;
@@ -289,20 +358,45 @@ class DrowsinessResult {
             }
           }
         } catch (e) {
-          print('❌ Error parsing detection box: $e');
-          print('📋 Raw prediction data: $pred');
+          print('Error parsing detection box: $e');
+          print('Raw prediction data: $pred');
         }
       }
+
+      // Determine drowsiness: closed eyes detected
+      isDrowsy = closedCount > 0 || detectionBoxes.any((box) => box.isDrowsy);
+
+      print('Open eyes: $openCount, Closed eyes: $closedCount');
+      print('DROWSINESS STATUS: ${isDrowsy ? "DROWSY" : "ALERT"}');
     } else {
-      print('❌ No predictions found in response');
-      print('📋 Full response: $json');
+      print('No predictions found in response');
+      print('Full response: $json');
     }
+
+    // Calculate eye opening percentage (0-100%)
+    double eyeOpenPercentage = 0.0;
+    if (openCount > 0 || closedCount > 0) {
+      double avgOpen = openCount > 0 ? (totalOpenConfidence / openCount) : 0.0;
+      double avgClosed =
+          closedCount > 0 ? (totalClosedConfidence / closedCount) : 0.0;
+
+      if (avgOpen + avgClosed > 0) {
+        eyeOpenPercentage = (avgOpen / (avgOpen + avgClosed)) * 100;
+      } else if (openCount > 0) {
+        eyeOpenPercentage = 100.0;
+      } else {
+        eyeOpenPercentage = 0.0;
+      }
+    }
+
+    print('Eye Opening Percentage: ${eyeOpenPercentage.toStringAsFixed(1)}%');
 
     final result = DrowsinessResult(
       isDrowsy: isDrowsy,
       confidence: maxConfidence,
       totalPredictions: totalPredictions,
       detectionBoxes: detectionBoxes,
+      eyeOpenPercentage: eyeOpenPercentage,
     );
 
     print(

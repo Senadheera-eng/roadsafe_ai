@@ -38,6 +38,13 @@ class _MjpegViewerState extends State<MjpegViewer> {
   List<DetectionBox> _detectionBoxes = [];
   Size? _imageSize;
 
+  // NEW: For 1-second drowsiness detection
+  DateTime? _drowsinessStartTime;
+  bool _hasTriggeredAlert = false;
+  static const Duration _drowsinessThreshold =
+      Duration(seconds: 1); // Changed to 1 second
+  double _currentEyeOpenPercentage = 100.0;
+
   @override
   void initState() {
     super.initState();
@@ -73,8 +80,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Reduced to 3 seconds for faster detection
-    _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
+    // Analyze every 2 seconds for faster response
+    _detectionTimer = Timer.periodic(Duration(seconds: 2), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -84,6 +91,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
+    _drowsinessStartTime = null;
+    _hasTriggeredAlert = false;
     setState(() {
       _detectionBoxes.clear();
     });
@@ -97,45 +106,81 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      print('🔍 Analyzing frame for drowsiness...');
+      print('=== FRAME ANALYSIS START ===');
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
       if (result != null && mounted) {
         setState(() {
           _detectionBoxes = result.detectionBoxes;
+          _currentEyeOpenPercentage = result.eyeOpenPercentage;
         });
 
-        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
-        print('🎯 Is Drowsy: ${result.isDrowsy}');
+        print('Predictions: ${result.totalPredictions}');
+        print('Eye Open: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
+        print('Is Drowsy: ${result.isDrowsy}');
 
-        // Debug: Log all detection boxes
+        // Log each detection box
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
+              '  Box: ${box.className} ${(box.confidence * 100).toInt()}% isDrowsy=${box.isDrowsy}');
         }
 
+        // SIMPLIFIED LOGIC: Just check if result.isDrowsy is true
         if (result.isDrowsy) {
-          print('🚨 DROWSINESS DETECTED! Triggering alerts...');
-
-          // Trigger vibration immediately
-          await DrowsinessDetector.triggerDrowsinessAlert();
-
-          // Call the callback if provided
-          if (widget.onDrowsinessDetected != null) {
-            print('📞 Calling drowsiness callback...');
-            widget.onDrowsinessDetected!(result);
+          if (_drowsinessStartTime == null) {
+            _drowsinessStartTime = DateTime.now();
+            _hasTriggeredAlert = false;
+            print('DROWSINESS TIMER STARTED');
           } else {
-            print('❌ No drowsiness callback provided');
+            final duration = DateTime.now().difference(_drowsinessStartTime!);
+            final milliseconds = duration.inMilliseconds;
+
+            print('Timer: ${milliseconds}ms / 1000ms');
+
+            if (milliseconds >= 1000 && !_hasTriggeredAlert) {
+              print('');
+              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+              print('VIBRATION TRIGGER CONDITIONS MET!');
+              print('Duration: ${milliseconds}ms');
+              print('Has triggered: $_hasTriggeredAlert');
+              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
+              print('');
+
+              _hasTriggeredAlert = true;
+
+              // DIRECT VIBRATION CALL
+              print('Calling triggerDrowsinessAlert()...');
+              try {
+                await DrowsinessDetector.triggerDrowsinessAlert();
+                print('triggerDrowsinessAlert() completed');
+              } catch (e) {
+                print('ERROR calling triggerDrowsinessAlert: $e');
+              }
+
+              // UI Callback
+              if (widget.onDrowsinessDetected != null) {
+                try {
+                  widget.onDrowsinessDetected!(result);
+                  print('UI callback completed');
+                } catch (e) {
+                  print('ERROR in UI callback: $e');
+                }
+              }
+            }
           }
         } else {
-          print('✅ Driver appears alert');
+          // Eyes open - reset
+          if (_drowsinessStartTime != null) {
+            print('Eyes opened - timer reset');
+          }
+          _drowsinessStartTime = null;
+          _hasTriggeredAlert = false;
         }
-      } else {
-        print('❌ Analysis failed - no result');
       }
-    } catch (e) {
-      print('❌ Frame analysis error: $e');
+    } catch (e, stackTrace) {
+      print('ANALYSIS ERROR: $e');
+      print('Stack: $stackTrace');
     } finally {
       if (mounted) {
         setState(() {
@@ -313,31 +358,114 @@ class _MjpegViewerState extends State<MjpegViewer> {
           },
         ),
 
-        // AI Status indicator
+        // AI Status indicator with Eye Opening Percentage
         if (widget.enableDrowsinessDetection)
           Positioned(
             top: 10,
             left: 10,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _isAnalyzing ? Colors.orange : Colors.green,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isAnalyzing ? Icons.psychology : Icons.visibility,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        _isAnalyzing ? 'Analyzing...' : 'AI Active',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // Eye Opening Percentage Display
+                Container(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: _currentEyeOpenPercentage > 50
+                        ? Colors.green
+                        : _currentEyeOpenPercentage > 20
+                            ? Colors.orange
+                            : Colors.red,
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _currentEyeOpenPercentage > 50
+                            ? Icons.visibility
+                            : Icons.visibility_off,
+                        color: Colors.white,
+                        size: 16,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Eyes: ${_currentEyeOpenPercentage.toStringAsFixed(0)}%',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+        // Timer indicator (shows when drowsiness is being tracked)
+        if (widget.enableDrowsinessDetection &&
+            _drowsinessStartTime != null &&
+            !_hasTriggeredAlert)
+          Positioned(
+            top: 10,
+            right: 10,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: _isAnalyzing ? Colors.orange : Colors.green,
+                color: Colors.red,
                 borderRadius: BorderRadius.circular(12),
+                boxShadow: [
+                  BoxShadow(
+                    color: Colors.red.withOpacity(0.5),
+                    blurRadius: 10,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
               child: Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Icon(
-                    _isAnalyzing ? Icons.psychology : Icons.visibility,
+                    Icons.warning_amber_rounded,
                     color: Colors.white,
                     size: 16,
                   ),
                   const SizedBox(width: 4),
                   Text(
-                    _isAnalyzing ? 'Analyzing...' : 'AI Active',
+                    '${(DateTime.now().difference(_drowsinessStartTime!).inMilliseconds / 1000).toStringAsFixed(1)}s',
                     style: TextStyle(
                       color: Colors.white,
-                      fontSize: 12,
+                      fontSize: 14,
                       fontWeight: FontWeight.bold,
                     ),
                   ),
@@ -347,7 +475,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
           ),
 
         // Detection count
-        if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+        if (widget.enableDrowsinessDetection &&
+            _detectionBoxes.isNotEmpty &&
+            _drowsinessStartTime == null)
           Positioned(
             top: 10,
             right: 10,
@@ -393,17 +523,16 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final adjustedWidth =
           width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
 
-      // Create very short label text to prevent overflow
-      final shortClassName = detection.className.length > 3
-          ? detection.className.substring(0, 3)
-          : detection.className;
+      // Create label text
       final confidenceText = '${(detection.confidence * 100).toInt()}%';
+      final labelText = '${detection.className} $confidenceText';
 
       return Positioned(
         left: adjustedLeft,
         top: adjustedTop,
         child: Container(
           width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          height: height < 30 ? 30 : height,
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth - 20,
             minWidth: 40,
@@ -416,7 +545,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
               color: detection.isDrowsy ? Colors.red : Colors.green,
               borderRadius: BorderRadius.only(
@@ -425,15 +554,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
               ),
             ),
             child: Text(
-              '$shortClassName $confidenceText',
+              labelText,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
               maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),

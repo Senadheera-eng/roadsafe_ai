@@ -51,7 +51,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
     _animationController.forward();
 
-    // Listen for device discoveries
     _cameraService.devicesStream.listen((devices) {
       if (mounted) {
         setState(() {
@@ -61,7 +60,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       }
     });
 
-    // Listen for connection status
     _cameraService.connectionStream.listen((isConnected) {
       if (mounted) {
         setState(() {
@@ -71,12 +69,11 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         if (isConnected) {
           _showMessage(
               'Connected to ESP32-CAM successfully!', AppColors.success);
-          _testAPIConnection(); // Test API when camera connects
+          _testAPIConnection();
         }
       }
     });
 
-    // Auto-start scanning
     _startScanning();
   }
 
@@ -138,14 +135,17 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _lastDetectionResult = result;
     });
 
-    _showMessage('DROWSINESS DETECTED! Phone is vibrating.', AppColors.error);
+    _showMessage(
+        'DROWSINESS DETECTED! Eyes closed for 1+ second. Phone is vibrating.',
+        AppColors.error);
 
-    // Show detailed detection info
     final drowsyBoxes =
         result.detectionBoxes.where((box) => box.isDrowsy).toList();
     if (drowsyBoxes.isNotEmpty) {
       final reasons = drowsyBoxes.map((box) => box.className).join(', ');
-      _showMessage('Detected: $reasons', AppColors.warning);
+      _showMessage(
+          'Detected: $reasons (Eyes: ${result.eyeOpenPercentage.toStringAsFixed(0)}%)',
+          AppColors.warning);
     }
   }
 
@@ -155,7 +155,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _discoveredDevices.clear();
     });
 
-    // First try targeted scan for known IP
     final knownDevices = await _cameraService.scanKnownESP32();
 
     if (knownDevices.isNotEmpty) {
@@ -167,7 +166,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       return;
     }
 
-    // If known IP not found, do full scan
     await _cameraService.scanForDevices();
 
     setState(() {
@@ -238,6 +236,50 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               'Enter your ESP32-CAM IP address:',
               style: AppTextStyles.bodyMedium,
             ),
+            const SizedBox(height: 16),
+
+            // VIBRATION TEST BUTTON
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    'Test Vibration Hardware',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      _showMessage('Testing vibration...', AppColors.info);
+                      print('');
+                      print('===== MANUAL VIBRATION TEST =====');
+                      await DrowsinessDetector.triggerDrowsinessAlert();
+                      print('===== TEST COMPLETE =====');
+                      print('');
+                      _showMessage('Did you feel vibration? Check console.',
+                          AppColors.warning);
+                    },
+                    icon: Icon(Icons.vibration),
+                    label: Text('VIBRATE NOW'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12, horizontal: 24),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 16),
             TextField(
               controller: ipController,
@@ -338,7 +380,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           ),
         ),
         actions: [
-          // Debug button
           IconButton(
             onPressed: () => _showDebugInfo(),
             icon: const Icon(
@@ -359,17 +400,12 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Connection Status
                   _buildConnectionStatus(),
-
                   const SizedBox(height: 24),
-
-                  // Camera Feed or Device List
                   if (_cameraService.isConnected)
                     _buildCameraFeed()
                   else
                     _buildDeviceDiscovery(),
-
                   const SizedBox(height: 32),
                 ],
               ),
@@ -403,18 +439,38 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   'Last Result: ${_lastDetectionResult?.totalPredictions ?? 0} predictions'),
               if (_lastDetectionResult != null) ...[
                 Text(
+                    'Eye Opening: ${_lastDetectionResult!.eyeOpenPercentage.toStringAsFixed(1)}%'),
+                Text(
                     'Detection Boxes: ${_lastDetectionResult!.detectionBoxes.length}'),
                 for (var box in _lastDetectionResult!.detectionBoxes)
                   Text(
                       '  - ${box.className}: ${(box.confidence * 100).toInt()}%'),
               ],
               SizedBox(height: 16),
-              ElevatedButton(
+              Text('Tests:', style: AppTextStyles.titleMedium),
+              SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  _showMessage('Testing vibration...', AppColors.info);
+                  await DrowsinessDetector.testVibration();
+                  _showMessage('Vibration test complete! Check console logs.',
+                      AppColors.success);
+                },
+                icon: Icon(Icons.vibration),
+                label: Text('Test Vibration'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                ),
+              ),
+              SizedBox(height: 8),
+              ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(context);
                   await _testAPIConnection();
                 },
-                child: Text('Test API Connection'),
+                icon: Icon(Icons.cloud),
+                label: Text('Test API Connection'),
               ),
             ],
           ),
@@ -495,8 +551,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
             ],
           ),
-
-          // API Status indicator
           if (isConnected) ...[
             const SizedBox(height: 12),
             Container(
@@ -550,7 +604,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 fontWeight: FontWeight.bold,
               ),
             ),
-            // AI Detection Toggle
             Row(
               children: [
                 Icon(
@@ -570,7 +623,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
                     _showMessage(
                       value
-                          ? 'AI Drowsiness Detection Enabled - You should see detection boxes'
+                          ? 'AI Drowsiness Detection Enabled - Close eyes for 1s to trigger'
                           : 'AI Drowsiness Detection Disabled',
                       value ? AppColors.success : AppColors.warning,
                     );
@@ -581,12 +634,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
           ],
         ),
-
         const SizedBox(height: 16),
-
         Container(
           width: double.infinity,
-          height: 400, // Increased height for better visibility
+          height: 400,
           decoration: BoxDecoration(
             color: Colors.black,
             borderRadius: BorderRadius.circular(20),
@@ -641,10 +692,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
           ),
         ),
-
         const SizedBox(height: 16),
-
-        // Detection Status Display
         if (_isDrowsinessDetectionEnabled && _lastDetectionResult != null)
           Container(
             padding: const EdgeInsets.all(16),
@@ -677,7 +725,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     const SizedBox(width: 8),
                     Text(
                       _lastDetectionResult!.isDrowsy
-                          ? 'DROWSINESS DETECTED'
+                          ? 'DROWSINESS DETECTED (1+ second)'
                           : 'Driver Alert',
                       style: AppTextStyles.bodyMedium.copyWith(
                         color: _lastDetectionResult!.isDrowsy
@@ -720,10 +768,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               ],
             ),
           ),
-
         const SizedBox(height: 16),
-
-        // Camera Controls
         Row(
           children: [
             Expanded(
