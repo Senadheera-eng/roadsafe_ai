@@ -38,6 +38,11 @@ class _MjpegViewerState extends State<MjpegViewer> {
   List<DetectionBox> _detectionBoxes = [];
   Size? _imageSize;
 
+  // NEW: For 2-second drowsiness detection
+  DateTime? _drowsinessStartTime;
+  bool _hasTriggeredAlert = false;
+  static const Duration _drowsinessThreshold = Duration(seconds: 2);
+
   @override
   void initState() {
     super.initState();
@@ -73,7 +78,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Reduced to 3 seconds for faster detection
+    // Analyze every 3 seconds
     _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
@@ -84,6 +89,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
+    _drowsinessStartTime = null;
+    _hasTriggeredAlert = false;
     setState(() {
       _detectionBoxes.clear();
     });
@@ -97,7 +104,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      print('🔍 Analyzing frame for drowsiness...');
+      print('Analyzing frame for drowsiness...');
 
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
@@ -106,36 +113,56 @@ class _MjpegViewerState extends State<MjpegViewer> {
           _detectionBoxes = result.detectionBoxes;
         });
 
-        print('📊 Analysis complete - Predictions: ${result.totalPredictions}');
-        print('🎯 Is Drowsy: ${result.isDrowsy}');
+        print('Analysis complete - Predictions: ${result.totalPredictions}');
+        print('Is Drowsy: ${result.isDrowsy}');
 
         // Debug: Log all detection boxes
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
+              'Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
         }
 
         if (result.isDrowsy) {
-          print('🚨 DROWSINESS DETECTED! Triggering alerts...');
-
-          // Trigger vibration immediately
-          await DrowsinessDetector.triggerDrowsinessAlert();
-
-          // Call the callback if provided
-          if (widget.onDrowsinessDetected != null) {
-            print('📞 Calling drowsiness callback...');
-            widget.onDrowsinessDetected!(result);
+          // Start timer if this is the first drowsy detection
+          if (_drowsinessStartTime == null) {
+            _drowsinessStartTime = DateTime.now();
+            _hasTriggeredAlert = false;
+            print('Drowsiness detected - starting timer');
           } else {
-            print('❌ No drowsiness callback provided');
+            // Check if 2 seconds have passed
+            final duration = DateTime.now().difference(_drowsinessStartTime!);
+
+            if (duration >= _drowsinessThreshold && !_hasTriggeredAlert) {
+              print(
+                  'DROWSINESS CONFIRMED for ${duration.inSeconds}+ seconds! Triggering alert...');
+              _hasTriggeredAlert = true;
+
+              // Trigger vibration
+              await DrowsinessDetector.triggerDrowsinessAlert();
+
+              // Call the callback
+              if (widget.onDrowsinessDetected != null) {
+                print('Calling drowsiness callback...');
+                widget.onDrowsinessDetected!(result);
+              }
+            } else if (!_hasTriggeredAlert) {
+              print(
+                  'Drowsiness ongoing: ${duration.inSeconds}s / ${_drowsinessThreshold.inSeconds}s');
+            }
           }
         } else {
-          print('✅ Driver appears alert');
+          // Reset timer when eyes are open/alert
+          if (_drowsinessStartTime != null) {
+            print('Eyes open/alert - resetting drowsiness timer');
+          }
+          _drowsinessStartTime = null;
+          _hasTriggeredAlert = false;
         }
       } else {
-        print('❌ Analysis failed - no result');
+        print('Analysis failed - no result');
       }
     } catch (e) {
-      print('❌ Frame analysis error: $e');
+      print('Frame analysis error: $e');
     } finally {
       if (mounted) {
         setState(() {
@@ -346,8 +373,34 @@ class _MjpegViewerState extends State<MjpegViewer> {
             ),
           ),
 
+        // Timer indicator (shows when drowsiness is being tracked)
+        if (widget.enableDrowsinessDetection &&
+            _drowsinessStartTime != null &&
+            !_hasTriggeredAlert)
+          Positioned(
+            top: 10,
+            right: 10,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(
+                color: Colors.red,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Text(
+                '${DateTime.now().difference(_drowsinessStartTime!).inSeconds}s',
+                style: TextStyle(
+                  color: Colors.white,
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+
         // Detection count
-        if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+        if (widget.enableDrowsinessDetection &&
+            _detectionBoxes.isNotEmpty &&
+            _drowsinessStartTime == null)
           Positioned(
             top: 10,
             right: 10,
@@ -393,17 +446,16 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final adjustedWidth =
           width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
 
-      // Create very short label text to prevent overflow
-      final shortClassName = detection.className.length > 3
-          ? detection.className.substring(0, 3)
-          : detection.className;
+      // Create label text
       final confidenceText = '${(detection.confidence * 100).toInt()}%';
+      final labelText = '${detection.className} $confidenceText';
 
       return Positioned(
         left: adjustedLeft,
         top: adjustedTop,
         child: Container(
           width: adjustedWidth < 50 ? 50 : adjustedWidth,
+          height: height < 30 ? 30 : height,
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth - 20,
             minWidth: 40,
@@ -416,7 +468,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             borderRadius: BorderRadius.circular(4),
           ),
           child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 2, vertical: 1),
+            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
               color: detection.isDrowsy ? Colors.red : Colors.green,
               borderRadius: BorderRadius.only(
@@ -425,15 +477,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
               ),
             ),
             child: Text(
-              '$shortClassName $confidenceText',
+              labelText,
               style: TextStyle(
                 color: Colors.white,
-                fontSize: 9,
+                fontSize: 10,
                 fontWeight: FontWeight.bold,
               ),
               maxLines: 1,
-              overflow: TextOverflow.clip,
-              softWrap: false,
+              overflow: TextOverflow.ellipsis,
             ),
           ),
         ),
