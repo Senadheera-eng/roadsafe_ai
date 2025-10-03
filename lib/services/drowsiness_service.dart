@@ -26,44 +26,34 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
+    // Extract bounding box coordinates
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
+    // FIXED: Only mark as drowsy for CLOSED eyes or YAWNING
     bool isDrowsy = false;
 
-    // MORE DETAILED LOGGING
-    print(
-        'RAW CLASS NAME: "$className" | CONFIDENCE: ${(confidence * 100).toInt()}%');
-
-    if (confidence > 0.25) {
-      // Check for closed eyes - try multiple variations
-      if (className.contains('clos') || // catches "closed", "close"
-          className.contains('shut') || // catches "shut"
-          className == 'drowsy' ||
-          className == 'sleepy' ||
-          className == 'tired') {
+    // Minimum confidence threshold
+    if (confidence > 0.3) {
+      // Closed eyes indicators
+      if (className.contains('closed') ||
+          className.contains('drowsy') ||
+          className.contains('sleepy') ||
+          className.contains('tired')) {
         isDrowsy = true;
-        print('  -> DETECTED AS DROWSY (closed eyes)');
       }
 
-      // Check for yawning
+      // Yawning indicator
       if (className.contains('yawn')) {
         isDrowsy = true;
-        print('  -> DETECTED AS DROWSY (yawning)');
-      }
-
-      // EXPLICITLY check it's NOT open eyes
-      if (className.contains('open') || className.contains('ope')) {
-        isDrowsy = false;
-        print('  -> DETECTED AS ALERT (open eyes)');
       }
     }
 
     return DetectionBox(
-      x: x - (width / 2),
-      y: y - (height / 2),
+      x: x - (width / 2), // Convert center x to top-left x
+      y: y - (height / 2), // Convert center y to top-left y
       width: width,
       height: height,
       className: className,
@@ -137,48 +127,117 @@ class DrowsinessDetector {
   }
 
   static Future<void> triggerDrowsinessAlert() async {
-    print('DROWSINESS DETECTED - Triggering vibration');
+    print('');
+    print('========================================');
+    print('🚨 DROWSINESS ALERT TRIGGERED!');
+    print('========================================');
 
     try {
+      // Check if vibration is available
       bool? hasVibrator = await Vibration.hasVibrator();
-      print('Device has vibrator: $hasVibrator');
+      print('📱 Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
-        print('Starting emergency vibration pattern...');
+        print('📳 Starting STRONG vibration pattern...');
 
-        // Strong initial vibration
+        // Try pattern 1: Long continuous vibration
         try {
-          await Vibration.vibrate(duration: 1000, amplitude: 255);
-          print('Initial vibration successful');
+          print(
+              '  -> Attempt 1: 2-second continuous vibration at max intensity');
+          await Vibration.vibrate(duration: 2000, amplitude: 255);
+          await Future.delayed(Duration(milliseconds: 100));
+          print('  ✅ Vibration pattern 1 completed');
         } catch (e) {
-          print('Initial vibration failed: $e');
+          print('  ❌ Vibration pattern 1 failed: $e');
         }
 
-        // Wait a moment
-        await Future.delayed(Duration(milliseconds: 200));
-
-        // Pattern vibration for emphasis
+        // Try pattern 2: Pulsing pattern
         try {
+          print('  -> Attempt 2: Pulsing pattern');
           await Vibration.vibrate(
-            pattern: [0, 500, 200, 500, 200, 500, 200, 500],
+            pattern: [0, 500, 100, 500, 100, 500, 100, 500],
             intensities: [0, 255, 0, 255, 0, 255, 0, 255],
           );
-          print('Pattern vibration successful');
+          await Future.delayed(Duration(milliseconds: 100));
+          print('  ✅ Vibration pattern 2 completed');
         } catch (e) {
-          print('Pattern vibration failed: $e');
+          print('  ❌ Vibration pattern 2 failed: $e');
         }
-      } else {
-        print('No vibrator available - trying fallback');
+
+        // Try pattern 3: Emergency SOS pattern
         try {
-          await Vibration.vibrate();
-          print('Fallback vibration worked');
+          print('  -> Attempt 3: SOS emergency pattern');
+          await Vibration.vibrate(
+            pattern: [
+              0,
+              200,
+              100,
+              200,
+              100,
+              200,
+              300,
+              500,
+              100,
+              500,
+              100,
+              500,
+              300,
+              200,
+              100,
+              200,
+              100,
+              200
+            ],
+            intensities: [
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255,
+              0,
+              255
+            ],
+          );
+          print('  ✅ Vibration pattern 3 (SOS) completed');
         } catch (e) {
-          print('Fallback vibration failed: $e');
+          print('  ❌ Vibration pattern 3 failed: $e');
+        }
+
+        print('✅ ALL VIBRATION PATTERNS COMPLETED');
+      } else {
+        print('⚠️ No vibrator hardware detected');
+
+        // Try basic vibration anyway as fallback
+        try {
+          print('  -> Trying basic fallback vibration...');
+          await Vibration.vibrate();
+          await Future.delayed(Duration(milliseconds: 1000));
+          await Vibration.vibrate();
+          print('  ✅ Fallback vibration worked');
+        } catch (e) {
+          print('  ❌ Even fallback vibration failed: $e');
         }
       }
     } catch (e) {
-      print('Vibration setup failed: $e');
+      print('❌ CRITICAL: Vibration system error: $e');
+      print('Stack: ${StackTrace.current}');
     }
+
+    print('========================================');
+    print('🔔 ALERT SEQUENCE FINISHED');
+    print('========================================');
+    print('');
   }
 
   static Future<void> testVibration() async {
@@ -217,12 +276,14 @@ class DrowsinessResult {
   final double confidence;
   final int totalPredictions;
   final List<DetectionBox> detectionBoxes;
+  final double eyeOpenPercentage; // NEW: Eye opening percentage
 
   DrowsinessResult({
     required this.isDrowsy,
     required this.confidence,
     required this.totalPredictions,
     required this.detectionBoxes,
+    required this.eyeOpenPercentage,
   });
 
   factory DrowsinessResult.fromJson(Map<String, dynamic> json) {
@@ -230,6 +291,12 @@ class DrowsinessResult {
     double maxConfidence = 0.0;
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
+
+    // NEW: Calculate eye opening percentage
+    double totalOpenConfidence = 0.0;
+    double totalClosedConfidence = 0.0;
+    int openCount = 0;
+    int closedCount = 0;
 
     print('Parsing API response...');
 
@@ -239,26 +306,27 @@ class DrowsinessResult {
 
       print('Found ${totalPredictions} predictions');
 
-      int closedEyeCount = 0;
-      int yawnCount = 0;
-
       for (var pred in predictions) {
         try {
           final box = DetectionBox.fromJson(pred);
           detectionBoxes.add(box);
 
+          final className = box.className.toLowerCase();
+
           print(
               'Prediction: ${box.className} (confidence: ${(box.confidence * 100).toInt()}%) at (${box.x.toInt()}, ${box.y.toInt()})');
 
+          // Calculate eye state percentages
+          if (className.contains('open') || className.contains('ope')) {
+            totalOpenConfidence += box.confidence;
+            openCount++;
+          } else if (className.contains('clos')) {
+            totalClosedConfidence += box.confidence;
+            closedCount++;
+          }
+
           // Count drowsiness indicators
           if (box.isDrowsy) {
-            if (box.className.contains('closed')) {
-              closedEyeCount++;
-            }
-            if (box.className.contains('yawn')) {
-              yawnCount++;
-            }
-
             if (box.confidence > maxConfidence) {
               maxConfidence = box.confidence;
             }
@@ -270,20 +338,40 @@ class DrowsinessResult {
         }
       }
 
-      // Determine drowsiness: Need at least one closed eye OR a yawn
-      isDrowsy = closedEyeCount > 0 || yawnCount > 0;
+      // Determine drowsiness: closed eyes detected
+      isDrowsy = closedCount > 0 || detectionBoxes.any((box) => box.isDrowsy);
 
-      print('Closed eyes: $closedEyeCount, Yawns: $yawnCount');
+      print('Open eyes: $openCount, Closed eyes: $closedCount');
+      print('DROWSINESS STATUS: ${isDrowsy ? "DROWSY" : "ALERT"}');
     } else {
       print('No predictions found in response');
       print('Full response: $json');
     }
+
+    // Calculate eye opening percentage (0-100%)
+    double eyeOpenPercentage = 0.0;
+    if (openCount > 0 || closedCount > 0) {
+      double avgOpen = openCount > 0 ? (totalOpenConfidence / openCount) : 0.0;
+      double avgClosed =
+          closedCount > 0 ? (totalClosedConfidence / closedCount) : 0.0;
+
+      if (avgOpen + avgClosed > 0) {
+        eyeOpenPercentage = (avgOpen / (avgOpen + avgClosed)) * 100;
+      } else if (openCount > 0) {
+        eyeOpenPercentage = 100.0;
+      } else {
+        eyeOpenPercentage = 0.0;
+      }
+    }
+
+    print('Eye Opening Percentage: ${eyeOpenPercentage.toStringAsFixed(1)}%');
 
     final result = DrowsinessResult(
       isDrowsy: isDrowsy,
       confidence: maxConfidence,
       totalPredictions: totalPredictions,
       detectionBoxes: detectionBoxes,
+      eyeOpenPercentage: eyeOpenPercentage,
     );
 
     print(

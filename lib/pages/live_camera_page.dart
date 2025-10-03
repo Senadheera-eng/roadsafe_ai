@@ -136,14 +136,16 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     });
 
     _showMessage(
-        'DROWSINESS DETECTED! Eyes closed for 2+ seconds. Phone is vibrating.',
+        'DROWSINESS DETECTED! Eyes closed for 1+ second. Phone is vibrating.',
         AppColors.error);
 
     final drowsyBoxes =
         result.detectionBoxes.where((box) => box.isDrowsy).toList();
     if (drowsyBoxes.isNotEmpty) {
       final reasons = drowsyBoxes.map((box) => box.className).join(', ');
-      _showMessage('Detected: $reasons', AppColors.warning);
+      _showMessage(
+          'Detected: $reasons (Eyes: ${result.eyeOpenPercentage.toStringAsFixed(0)}%)',
+          AppColors.warning);
     }
   }
 
@@ -234,6 +236,50 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               'Enter your ESP32-CAM IP address:',
               style: AppTextStyles.bodyMedium,
             ),
+            const SizedBox(height: 16),
+
+            // VIBRATION TEST BUTTON
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error),
+              ),
+              child: Column(
+                children: [
+                  Text(
+                    'Test Vibration Hardware',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ElevatedButton.icon(
+                    onPressed: () async {
+                      _showMessage('Testing vibration...', AppColors.info);
+                      print('');
+                      print('===== MANUAL VIBRATION TEST =====');
+                      await DrowsinessDetector.triggerDrowsinessAlert();
+                      print('===== TEST COMPLETE =====');
+                      print('');
+                      _showMessage('Did you feel vibration? Check console.',
+                          AppColors.warning);
+                    },
+                    icon: Icon(Icons.vibration),
+                    label: Text('VIBRATE NOW'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.error,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(
+                          vertical: 12, horizontal: 24),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
             const SizedBox(height: 16),
             TextField(
               controller: ipController,
@@ -393,18 +439,38 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   'Last Result: ${_lastDetectionResult?.totalPredictions ?? 0} predictions'),
               if (_lastDetectionResult != null) ...[
                 Text(
+                    'Eye Opening: ${_lastDetectionResult!.eyeOpenPercentage.toStringAsFixed(1)}%'),
+                Text(
                     'Detection Boxes: ${_lastDetectionResult!.detectionBoxes.length}'),
                 for (var box in _lastDetectionResult!.detectionBoxes)
                   Text(
                       '  - ${box.className}: ${(box.confidence * 100).toInt()}%'),
               ],
               SizedBox(height: 16),
-              ElevatedButton(
+              Text('Tests:', style: AppTextStyles.titleMedium),
+              SizedBox(height: 8),
+              ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  _showMessage('Testing vibration...', AppColors.info);
+                  await DrowsinessDetector.testVibration();
+                  _showMessage('Vibration test complete! Check console logs.',
+                      AppColors.success);
+                },
+                icon: Icon(Icons.vibration),
+                label: Text('Test Vibration'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                ),
+              ),
+              SizedBox(height: 8),
+              ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(context);
                   await _testAPIConnection();
                 },
-                child: Text('Test API Connection'),
+                icon: Icon(Icons.cloud),
+                label: Text('Test API Connection'),
               ),
             ],
           ),
@@ -557,7 +623,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
                     _showMessage(
                       value
-                          ? 'AI Drowsiness Detection Enabled - Closes eyes for 2s to trigger'
+                          ? 'AI Drowsiness Detection Enabled - Close eyes for 1s to trigger'
                           : 'AI Drowsiness Detection Disabled',
                       value ? AppColors.success : AppColors.warning,
                     );
@@ -659,7 +725,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     const SizedBox(width: 8),
                     Text(
                       _lastDetectionResult!.isDrowsy
-                          ? 'DROWSINESS DETECTED (2+ seconds)'
+                          ? 'DROWSINESS DETECTED (1+ second)'
                           : 'Driver Alert',
                       style: AppTextStyles.bodyMedium.copyWith(
                         color: _lastDetectionResult!.isDrowsy
