@@ -26,29 +26,23 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
-    // Extract bounding box coordinates
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
     final height = (json['height'] ?? 0.0).toDouble();
 
-    // FIXED: Correct drowsiness detection logic
     bool isDrowsy = false;
 
-    // Drowsy indicators with appropriate confidence thresholds
     if (confidence > 0.3) {
-      // Only consider confident detections
       if (className.contains('closed') ||
           className.contains('drowsy') ||
           className.contains('sleepy') ||
           className.contains('tired')) {
         isDrowsy = true;
       } else if (className.contains('yawn')) {
-        isDrowsy = true; // Yawning is a drowsiness indicator
+        isDrowsy = true;
       }
     }
-
-    // REMOVED THE BUGGY LOGIC - open eyes are NOT drowsy!
 
     return DetectionBox(
       x: x - (width / 2),
@@ -67,18 +61,16 @@ class DrowsinessDetector {
   static const String API_URL = "https://detect.roboflow.com";
   static const String MODEL_ID = "drowsiness-driver/1";
 
-  // Track closed eye duration
   static DateTime? _firstClosedEyeDetection;
   static const int CLOSED_EYE_THRESHOLD_SECONDS = 2;
 
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
-      print('🔍 Starting drowsiness analysis...');
-      print('📊 Image size: ${imageBytes.length} bytes');
+      print('Starting drowsiness analysis...');
+      print('Image size: ${imageBytes.length} bytes');
 
       String base64Image = base64Encode(imageBytes);
 
-      // Lower confidence to catch more detections, but we'll filter in logic
       final response = await http
           .post(
             Uri.parse(
@@ -91,42 +83,41 @@ class DrowsinessDetector {
           )
           .timeout(Duration(seconds: 10));
 
-      print('📡 API Response Status: ${response.statusCode}');
+      print('API Response Status: ${response.statusCode}');
 
       if (response.statusCode == 200) {
-        print('✅ API call successful');
+        print('API call successful');
         final data = json.decode(response.body);
-        print('📋 API Response: $data');
+        print('API Response: $data');
 
         final result = DrowsinessResult.fromJson(data);
 
-        // Check closed eye duration
         result.checkClosedEyeDuration();
 
-        print('🎯 Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"}');
+        print('Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"}');
         print('   - Confidence: ${result.confidence.toStringAsFixed(2)}');
         print('   - Detection boxes: ${result.detectionBoxes.length}');
         print('   - Closed eye duration: ${result.closedEyeDurationSeconds}s');
 
         for (var box in result.detectionBoxes) {
           print(
-              '📦 Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "⚠️ DROWSY" : "✅ NORMAL"}');
+              'Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "DROWSY" : "NORMAL"}');
         }
 
         return result;
       } else {
-        print('❌ API Error: ${response.statusCode} - ${response.body}');
+        print('API Error: ${response.statusCode} - ${response.body}');
         return null;
       }
     } catch (e) {
-      print('🚨 Drowsiness detection error: $e');
+      print('Drowsiness detection error: $e');
       return null;
     }
   }
 
   static void resetClosedEyeTimer() {
     _firstClosedEyeDetection = null;
-    print('🔄 Closed eye timer reset');
+    print('Closed eye timer reset');
   }
 
   static int getClosedEyeDuration() {
@@ -137,56 +128,55 @@ class DrowsinessDetector {
   static void updateClosedEyeTimer(bool hasClosedEyes) {
     if (hasClosedEyes) {
       _firstClosedEyeDetection ??= DateTime.now();
-      print('👁️ Closed eyes detected for ${getClosedEyeDuration()}s');
+      print('Closed eyes detected for ${getClosedEyeDuration()}s');
     } else {
       if (_firstClosedEyeDetection != null) {
-        print('👁️ Eyes opened - resetting timer');
+        print('Eyes opened - resetting timer');
       }
       _firstClosedEyeDetection = null;
     }
   }
 
   static Future<void> triggerDrowsinessAlert() async {
-    print('🚨 DROWSINESS ALERT TRIGGERED');
+    print('DROWSINESS ALERT TRIGGERED');
 
     try {
       bool? hasVibrator = await Vibration.hasVibrator();
-      print('📱 Device has vibrator: $hasVibrator');
+      print('Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
-        // Emergency vibration pattern - longer and more intense
         await Vibration.vibrate(
           pattern: [0, 1000, 300, 1000, 300, 1000],
           intensities: [0, 255, 0, 255, 0, 255],
         );
-        print('✅ Emergency vibration triggered');
+        print('Emergency vibration triggered');
       } else {
         await Vibration.vibrate(duration: 2000);
-        print('✅ Basic vibration triggered');
+        print('Basic vibration triggered');
       }
     } catch (e) {
-      print('❌ Vibration failed: $e');
+      print('Vibration failed: $e');
     }
   }
 
   static Future<bool> testAPIConnection() async {
     try {
-      print('🔗 Testing API connection...');
+      print('Testing API connection...');
       final response = await http
           .get(Uri.parse('$API_URL/$MODEL_ID?api_key=$API_KEY'))
           .timeout(Duration(seconds: 10));
 
-      print('📡 API Test Response: ${response.statusCode}');
+      print('API Test Response: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 400) {
-        print('✅ API connection successful');
+        print('API connection successful');
         return true;
       } else {
-        print('❌ API connection failed: ${response.statusCode}');
+        print('API connection failed: ${response.statusCode}');
         return false;
       }
     } catch (e) {
-      print('❌ API connection error: $e');
+      print('API connection error: $e');
       return false;
     }
   }
@@ -207,7 +197,6 @@ class DrowsinessResult {
   });
 
   void checkClosedEyeDuration() {
-    // Check if any detection shows closed eyes
     bool hasClosedEyes = detectionBoxes.any((box) =>
         (box.className.contains('closed') ||
             box.className.contains('drowsy') ||
@@ -224,15 +213,14 @@ class DrowsinessResult {
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
 
-    print('📝 Parsing API response...');
+    print('Parsing API response...');
 
     if (json['predictions'] != null) {
       final predictions = json['predictions'] as List;
       totalPredictions = predictions.length;
 
-      print('📊 Found ${totalPredictions} predictions');
+      print('Found ${totalPredictions} predictions');
 
-      // Count detection types
       int openCount = 0;
       int closedCount = 0;
       int yawnCount = 0;
@@ -245,7 +233,6 @@ class DrowsinessResult {
 
           final className = box.className.toLowerCase();
 
-          // Count detection types
           if (className.contains('open')) openCount++;
           if (className.contains('closed')) closedCount++;
           if (className.contains('yawn')) yawnCount++;
@@ -253,48 +240,41 @@ class DrowsinessResult {
             drowsyCount++;
 
           print(
-              '🎯 Prediction: ${box.className} (${(box.confidence * 100).toInt()}%) at (${box.x.toInt()}, ${box.y.toInt()})');
+              'Prediction: ${box.className} (${(box.confidence * 100).toInt()}%) at (${box.x.toInt()}, ${box.y.toInt()})');
 
-          // Check for drowsiness
           if (box.isDrowsy && box.confidence > maxConfidence) {
             maxConfidence = box.confidence;
           }
         } catch (e) {
-          print('❌ Error parsing detection box: $e');
+          print('Error parsing detection box: $e');
         }
       }
 
-      print('📊 Detection Summary:');
+      print('Detection Summary:');
       print('   - Open eyes: $openCount');
       print('   - Closed eyes: $closedCount');
       print('   - Yawning: $yawnCount');
       print('   - Drowsy/Sleepy: $drowsyCount');
 
-      // Determine drowsiness based on detections
       bool hasClosedEyes = closedCount > 0 || drowsyCount > 0;
       bool hasYawning = yawnCount > 0;
 
-      // Check closed eye duration
       DrowsinessDetector.updateClosedEyeTimer(hasClosedEyes);
       int closedDuration = DrowsinessDetector.getClosedEyeDuration();
 
-      // Drowsiness logic:
-      // 1. Yawning = immediate alert
-      // 2. Closed eyes for 2+ seconds = alert
-      // 3. Multiple drowsy indicators = alert
       if (hasYawning && maxConfidence > 0.3) {
         isDrowsy = true;
-        print('⚠️ YAWNING DETECTED');
+        print('YAWNING DETECTED');
       } else if (hasClosedEyes &&
           closedDuration >= DrowsinessDetector.CLOSED_EYE_THRESHOLD_SECONDS) {
         isDrowsy = true;
-        print('⚠️ EYES CLOSED FOR ${closedDuration} SECONDS');
+        print('EYES CLOSED FOR ${closedDuration} SECONDS');
       } else if (closedCount >= 2 || drowsyCount >= 1) {
         isDrowsy = true;
-        print('⚠️ MULTIPLE DROWSINESS INDICATORS');
+        print('MULTIPLE DROWSINESS INDICATORS');
       }
     } else {
-      print('❌ No predictions found in response');
+      print('No predictions found in response');
     }
 
     final result = DrowsinessResult(
@@ -305,7 +285,7 @@ class DrowsinessResult {
     );
 
     print(
-        '📋 Final: ${result.isDrowsy ? "🚨 DROWSY" : "✅ ALERT"} (${result.detectionBoxes.length} boxes)');
+        'Final: ${result.isDrowsy ? "DROWSY" : "ALERT"} (${result.detectionBoxes.length} boxes)');
     return result;
   }
 }

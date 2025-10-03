@@ -73,8 +73,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Check every 3 seconds
-    _detectionTimer = Timer.periodic(Duration(seconds: 3), (timer) {
+    _detectionTimer = Timer.periodic(Duration(seconds: 5), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -111,7 +110,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
         print('Is Drowsy: ${result.isDrowsy}');
         print('Closed eye duration: ${result.closedEyeDurationSeconds}s');
 
-        // Debug: Log all detection boxes
         for (var box in result.detectionBoxes) {
           print(
               'Box: ${box.className} ${(box.confidence * 100).toInt()}% - Drowsy: ${box.isDrowsy}');
@@ -120,10 +118,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
         if (result.isDrowsy) {
           print('DROWSINESS DETECTED! Triggering alerts...');
 
-          // Trigger vibration
           await DrowsinessDetector.triggerDrowsinessAlert();
 
-          // Call the callback
           if (widget.onDrowsinessDetected != null) {
             print('Calling drowsiness callback...');
             widget.onDrowsinessDetected!(result);
@@ -179,10 +175,12 @@ class _MjpegViewerState extends State<MjpegViewer> {
     try {
       final codec = await ui.instantiateImageCodec(imageBytes);
       final frame = await codec.getNextFrame();
-      setState(() {
-        _imageSize =
-            Size(frame.image.width.toDouble(), frame.image.height.toDouble());
-      });
+      if (mounted) {
+        setState(() {
+          _imageSize =
+              Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+        });
+      }
     } catch (e) {
       print('Error getting image size: $e');
     }
@@ -198,16 +196,23 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final client = http.Client();
       final request = http.Request('GET', Uri.parse(url));
 
-      final response = await client.send(request);
+      request.headers['Connection'] = 'keep-alive';
+
+      final response = await client.send(request).timeout(
+        Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Stream connection timeout');
+        },
+      );
 
       if (response.statusCode != 200) {
-        throw Exception(
-            'HTTP ${response.statusCode}: Failed to connect to stream');
+        throw Exception('HTTP ${response.statusCode}');
       }
 
       const boundary = '123456789000000000000987654321';
       List<int> buffer = [];
       bool inImage = false;
+      int frameCount = 0;
 
       await for (List<int> chunk in response.stream) {
         buffer.addAll(chunk);
@@ -230,7 +235,10 @@ class _MjpegViewerState extends State<MjpegViewer> {
             List<int> imageData = buffer.sublist(0, endIndex);
 
             if (imageData.isNotEmpty) {
-              yield Uint8List.fromList(imageData);
+              frameCount++;
+              if (frameCount % 2 == 0) {
+                yield Uint8List.fromList(imageData);
+              }
             }
 
             buffer = buffer.sublist(endIndex + boundary.length);
@@ -238,12 +246,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
           }
         }
 
-        if (buffer.length > 1024 * 1024) {
+        if (buffer.length > 500 * 1024) {
           buffer.clear();
           inImage = false;
+          print('Buffer overflow - cleared');
         }
       }
     } catch (e) {
+      print('Stream error: $e');
       yield* Stream.error(e);
     }
   }
@@ -291,7 +301,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
     return Stack(
       children: [
-        // Video feed
         LayoutBuilder(
           builder: (context, constraints) {
             return Stack(
@@ -303,8 +312,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
                   height: constraints.maxHeight,
                   gaplessPlayback: true,
                 ),
-
-                // Detection overlay
                 if (widget.enableDrowsinessDetection &&
                     _detectionBoxes.isNotEmpty)
                   ...buildDetectionOverlay(constraints),
@@ -312,8 +319,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
             );
           },
         ),
-
-        // AI Status indicator
         if (widget.enableDrowsinessDetection)
           Positioned(
             top: 10,
@@ -345,8 +350,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
               ),
             ),
           ),
-
-        // Detection count
         if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
           Positioned(
             top: 10,
@@ -383,7 +386,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final width = detection.width * scaleX;
       final height = detection.height * scaleY;
 
-      // Ensure bounds are within screen
       final adjustedLeft = left < 0
           ? 0.0
           : (left + width > constraints.maxWidth
@@ -393,10 +395,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final adjustedWidth =
           width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
 
-      // Determine box color based on isDrowsy flag
       final boxColor = detection.isDrowsy ? Colors.red : Colors.green;
 
-      // Create label text
       final labelText =
           '${detection.className} ${(detection.confidence * 100).toInt()}%';
 

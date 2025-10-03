@@ -471,8 +471,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     ),
                     Text(
                       isConnected
-                          ? 'Streaming from ${device?.deviceName ?? 'Unknown Device'}'
-                          : 'Scan for ESP32-CAM devices to connect',
+                          ? 'IP: ${device?.ipAddress ?? 'Unknown'}'
+                          : 'Check ESP32 power (use 5V 2A) and WiFi',
                       style: AppTextStyles.bodySmall.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -495,8 +495,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
             ],
           ),
-
-          // API Status indicator
           if (isConnected) ...[
             const SizedBox(height: 12),
             Container(
@@ -526,6 +524,30 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                       color:
                           _isAPITested ? AppColors.success : AppColors.warning,
                       fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: Colors.orange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: Colors.orange, width: 1),
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.warning_amber, color: Colors.orange, size: 16),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'If feed freezes: Check ESP32 power supply (5V 2A adapter required)',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: Colors.orange,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
