@@ -26,7 +26,6 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
-    // Extract bounding box coordinates
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
@@ -64,8 +63,8 @@ class DetectionBox {
     }
 
     return DetectionBox(
-      x: x - (width / 2), // Convert center x to top-left x
-      y: y - (height / 2), // Convert center y to top-left y
+      x: x - (width / 2),
+      y: y - (height / 2),
       width: width,
       height: height,
       className: className,
@@ -80,12 +79,14 @@ class DrowsinessDetector {
   static const String API_URL = "https://detect.roboflow.com";
   static const String MODEL_ID = "drowsiness-driver/1";
 
+  static DateTime? _firstClosedEyeDetection;
+  static const int CLOSED_EYE_THRESHOLD_SECONDS = 2;
+
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
       print('Starting drowsiness analysis...');
       print('Image size: ${imageBytes.length} bytes');
 
-      // Convert to base64
       String base64Image = base64Encode(imageBytes);
       print('Base64 encoded');
 
@@ -113,7 +114,13 @@ class DrowsinessDetector {
         print(
             'Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"} (confidence: ${result.confidence.toStringAsFixed(2)}, boxes: ${result.detectionBoxes.length})');
 
-        // Log all detections
+        result.checkClosedEyeDuration();
+
+        print('Detection Result: ${result.isDrowsy ? "DROWSY" : "ALERT"}');
+        print('   - Confidence: ${result.confidence.toStringAsFixed(2)}');
+        print('   - Detection boxes: ${result.detectionBoxes.length}');
+        print('   - Closed eye duration: ${result.closedEyeDurationSeconds}s');
+
         for (var box in result.detectionBoxes) {
           print(
               'Detection: ${box.className} - ${(box.confidence * 100).toInt()}% ${box.isDrowsy ? "DROWSY" : "NORMAL"}');
@@ -138,6 +145,28 @@ class DrowsinessDetector {
     }
   }
 
+  static void resetClosedEyeTimer() {
+    _firstClosedEyeDetection = null;
+    print('Closed eye timer reset');
+  }
+
+  static int getClosedEyeDuration() {
+    if (_firstClosedEyeDetection == null) return 0;
+    return DateTime.now().difference(_firstClosedEyeDetection!).inSeconds;
+  }
+
+  static void updateClosedEyeTimer(bool hasClosedEyes) {
+    if (hasClosedEyes) {
+      _firstClosedEyeDetection ??= DateTime.now();
+      print('Closed eyes detected for ${getClosedEyeDuration()}s');
+    } else {
+      if (_firstClosedEyeDetection != null) {
+        print('Eyes opened - resetting timer');
+      }
+      _firstClosedEyeDetection = null;
+    }
+  }
+
   static Future<void> triggerDrowsinessAlert() async {
     print('');
     print('========================================');
@@ -145,9 +174,8 @@ class DrowsinessDetector {
     print('========================================');
 
     try {
-      // Check if vibration is available
       bool? hasVibrator = await Vibration.hasVibrator();
-      print('📱 Device has vibrator: $hasVibrator');
+      print('Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
         print('📳 Starting STRONG vibration pattern...');
@@ -262,9 +290,7 @@ class DrowsinessDetector {
       print('Testing API connection...');
 
       final response = await http
-          .get(
-            Uri.parse('$API_URL/$MODEL_ID?api_key=$API_KEY'),
-          )
+          .get(Uri.parse('$API_URL/$MODEL_ID?api_key=$API_KEY'))
           .timeout(Duration(seconds: 10));
 
       print('API Test Response: ${response.statusCode}');
@@ -297,6 +323,17 @@ class DrowsinessResult {
     required this.detectionBoxes,
     required this.eyeOpenPercentage,
   });
+
+  void checkClosedEyeDuration() {
+    bool hasClosedEyes = detectionBoxes.any((box) =>
+        (box.className.contains('closed') ||
+            box.className.contains('drowsy') ||
+            box.className.contains('sleepy')) &&
+        box.confidence > 0.3);
+
+    DrowsinessDetector.updateClosedEyeTimer(hasClosedEyes);
+    closedEyeDurationSeconds = DrowsinessDetector.getClosedEyeDuration();
+  }
 
   factory DrowsinessResult.fromJson(Map<String, dynamic> json) {
     bool isDrowsy = false;

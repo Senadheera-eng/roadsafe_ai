@@ -224,10 +224,12 @@ class _MjpegViewerState extends State<MjpegViewer> {
     try {
       final codec = await ui.instantiateImageCodec(imageBytes);
       final frame = await codec.getNextFrame();
-      setState(() {
-        _imageSize =
-            Size(frame.image.width.toDouble(), frame.image.height.toDouble());
-      });
+      if (mounted) {
+        setState(() {
+          _imageSize =
+              Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+        });
+      }
     } catch (e) {
       print('Error getting image size: $e');
     }
@@ -243,16 +245,23 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final client = http.Client();
       final request = http.Request('GET', Uri.parse(url));
 
-      final response = await client.send(request);
+      request.headers['Connection'] = 'keep-alive';
+
+      final response = await client.send(request).timeout(
+        Duration(seconds: 10),
+        onTimeout: () {
+          throw TimeoutException('Stream connection timeout');
+        },
+      );
 
       if (response.statusCode != 200) {
-        throw Exception(
-            'HTTP ${response.statusCode}: Failed to connect to stream');
+        throw Exception('HTTP ${response.statusCode}');
       }
 
       const boundary = '123456789000000000000987654321';
       List<int> buffer = [];
       bool inImage = false;
+      int frameCount = 0;
 
       await for (List<int> chunk in response.stream) {
         buffer.addAll(chunk);
@@ -275,7 +284,10 @@ class _MjpegViewerState extends State<MjpegViewer> {
             List<int> imageData = buffer.sublist(0, endIndex);
 
             if (imageData.isNotEmpty) {
-              yield Uint8List.fromList(imageData);
+              frameCount++;
+              if (frameCount % 2 == 0) {
+                yield Uint8List.fromList(imageData);
+              }
             }
 
             buffer = buffer.sublist(endIndex + boundary.length);
@@ -283,12 +295,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
           }
         }
 
-        if (buffer.length > 1024 * 1024) {
+        if (buffer.length > 500 * 1024) {
           buffer.clear();
           inImage = false;
+          print('Buffer overflow - cleared');
         }
       }
     } catch (e) {
+      print('Stream error: $e');
       yield* Stream.error(e);
     }
   }
@@ -336,7 +350,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
     return Stack(
       children: [
-        // Video feed
         LayoutBuilder(
           builder: (context, constraints) {
             return Stack(
@@ -348,8 +361,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
                   height: constraints.maxHeight,
                   gaplessPlayback: true,
                 ),
-
-                // Detection overlay
                 if (widget.enableDrowsinessDetection &&
                     _detectionBoxes.isNotEmpty)
                   ...buildDetectionOverlay(constraints),
@@ -513,7 +524,6 @@ class _MjpegViewerState extends State<MjpegViewer> {
       final width = detection.width * scaleX;
       final height = detection.height * scaleY;
 
-      // Ensure bounds are within screen
       final adjustedLeft = left < 0
           ? 0.0
           : (left + width > constraints.maxWidth
@@ -536,10 +546,11 @@ class _MjpegViewerState extends State<MjpegViewer> {
           constraints: BoxConstraints(
             maxWidth: constraints.maxWidth - 20,
             minWidth: 40,
+            minHeight: 20,
           ),
           decoration: BoxDecoration(
             border: Border.all(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: boxColor,
               width: 2,
             ),
             borderRadius: BorderRadius.circular(4),
@@ -547,7 +558,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
           child: Container(
             padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
             decoration: BoxDecoration(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
+              color: boxColor,
               borderRadius: BorderRadius.only(
                 topLeft: Radius.circular(2),
                 topRight: Radius.circular(2),
