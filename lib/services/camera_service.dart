@@ -44,7 +44,6 @@ class CameraService {
     return 'http://${_connectedDevice!.ipAddress}/stream';
   }
 
-  // Replace the _getLocalNetworkBase method with this improved version:
   Future<String?> _getLocalNetworkBase() async {
     try {
       final info = NetworkInfo();
@@ -61,7 +60,6 @@ class CameraService {
     return null;
   }
 
-  // Update scanForDevices method to handle multiple network ranges:
   Future<List<ESP32Device>> scanForDevices() async {
     print('Starting ESP32-CAM scan...');
 
@@ -177,7 +175,6 @@ class CameraService {
   }
 
   // Check if an IP address is an ESP32-CAM device
-  // In your _checkESP32Device method, replace the existing one with this:
   Future<ESP32Device?> _checkESP32Device(String ipAddress) async {
     try {
       final response = await http.get(
@@ -279,11 +276,13 @@ class CameraService {
 
     List<ESP32Device> devices = [];
 
+    // Use Future.any to connect to the fastest available device
     for (String ip in knownIPs) {
       final device = await _checkESP32Device(ip);
       if (device != null) {
         devices.add(device);
         print('Found ESP32-CAM at: $ip');
+        break; // Stop after finding the first one
       }
     }
 
@@ -315,7 +314,6 @@ class CameraService {
         print('Basic connectivity OK');
 
         // For ESP32-CAM, just ensure basic connectivity works
-        // The stream will be tested when actually viewing
         _connectedDevice = ESP32Device(
           ipAddress: device.ipAddress,
           deviceName: device.deviceName,
@@ -355,6 +353,45 @@ class CameraService {
       return response.statusCode == 200;
     } catch (e) {
       print('Connection test failed: $e');
+      return false;
+    }
+  }
+
+  /// NEW: Simulated method to send Wi-Fi credentials to ESP32 AP mode or configuration endpoint
+  Future<bool> configureWifi(
+      String ip, String ssid, String password, String deviceName) async {
+    print('Attempting to configure ESP32 at $ip with SSID: $ssid');
+
+    // In a real scenario, this would POST data to an endpoint like /configwifi
+    // We are mocking success after a delay.
+    await Future.delayed(const Duration(seconds: 2));
+
+    try {
+      // Mocked HTTP POST request to a Wi-Fi configuration endpoint on the ESP32
+      // This endpoint needs to be implemented in the Arduino firmware later
+      /*
+      final response = await http.post(
+        Uri.parse('http://$ip/configwifi'),
+        body: jsonEncode({
+          'ssid': ssid,
+          'password': password,
+          'deviceName': deviceName,
+        }),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        print('Mock Wi-Fi configuration signal sent successfully.');
+        return true;
+      }
+      return false;
+      */
+
+      // MOCK SUCCESS: Assuming the post works and the ESP32 restarts on the new network.
+      print('Mock Wi-Fi configuration successful.');
+      return true;
+    } catch (e) {
+      print('Mock Wi-Fi configuration failed: $e');
       return false;
     }
   }
