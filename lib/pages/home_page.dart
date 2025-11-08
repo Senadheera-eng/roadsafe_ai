@@ -1,10 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:road_safe_ai/pages/live_camera_page.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
-import 'settings_page.dart';
+import 'safety_guide_page.dart';
+import 'device_setup_page.dart';
+import 'analytics_page.dart'; // NEW
+import '../services/data_service.dart'; // NEW
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -14,6 +18,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  final DataService _dataService = DataService(); // NEW
+
   late AnimationController _welcomeAnimationController;
   late AnimationController _cardsAnimationController;
   late Animation<double> _welcomeSlideAnimation;
@@ -25,6 +31,70 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _initializeAnimations();
     _startAnimations();
+    _ensureMockData(); // NEW: Create mock data on startup
+  }
+
+  // NEW: Mock data generation for initial demo
+  void _ensureMockData() async {
+    final sessionsStream = _dataService.getSessions();
+    final firstSnapshot = await sessionsStream.first;
+
+    // Only generate mock data if no sessions exist
+    if (firstSnapshot.isEmpty) {
+      // Simulate a successful recent session (high score)
+      final session1 = DrivingSession(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        startTime: DateTime.now().subtract(const Duration(hours: 3)),
+        endTime: DateTime.now(),
+        duration: const Duration(hours: 3),
+        totalAlerts: 1,
+        safetyScore: 95.5,
+        alerts: [
+          AlertEvent(
+            time: DateTime.now().subtract(const Duration(minutes: 50)),
+            type: 'Yawn Detected',
+          ),
+        ],
+      );
+      _dataService.addSession(session1);
+
+      // Simulate an older session with low rest (low score)
+      final session2 = DrivingSession(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        startTime: DateTime.now().subtract(const Duration(days: 2, hours: 5)),
+        endTime: DateTime.now().subtract(const Duration(days: 2, hours: 3)),
+        duration: const Duration(hours: 2),
+        totalAlerts: 4,
+        safetyScore: 68.2,
+        alerts: [
+          AlertEvent(
+            time: DateTime.now().subtract(
+              const Duration(days: 2, minutes: 150),
+            ),
+            type: 'Eyes Closed',
+          ),
+          AlertEvent(
+            time: DateTime.now().subtract(
+              const Duration(days: 2, minutes: 140),
+            ),
+            type: 'Yawn Detected',
+          ),
+        ],
+      );
+      _dataService.addSession(session2);
+
+      // Mock sleep log
+      final sleepLog = SleepLog(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        sleepTime: DateTime.now().subtract(const Duration(hours: 9)),
+        wakeTime: DateTime.now().subtract(const Duration(hours: 1)),
+        duration: const Duration(hours: 8, minutes: 0),
+      );
+      _dataService.addSleepLog(sleepLog);
+    }
   }
 
   void _initializeAnimations() {
@@ -38,29 +108,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       vsync: this,
     );
 
-    _welcomeSlideAnimation = Tween<double>(
-      begin: -50,
-      end: 0,
-    ).animate(CurvedAnimation(
-      parent: _welcomeAnimationController,
-      curve: Curves.easeOutCubic,
-    ));
+    _welcomeSlideAnimation = Tween<double>(begin: -50, end: 0).animate(
+      CurvedAnimation(
+        parent: _welcomeAnimationController,
+        curve: Curves.easeOutCubic,
+      ),
+    );
 
-    _welcomeFadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(
-      parent: _welcomeAnimationController,
-      curve: Curves.easeOut,
-    ));
+    _welcomeFadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(
+        parent: _welcomeAnimationController,
+        curve: Curves.easeOut,
+      ),
+    );
 
-    _cardsFadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(
-      parent: _cardsAnimationController,
-      curve: Curves.easeOut,
-    ));
+    _cardsFadeAnimation = Tween<double>(begin: 0, end: 1).animate(
+      CurvedAnimation(parent: _cardsAnimationController, curve: Curves.easeOut),
+    );
   }
 
   void _startAnimations() {
@@ -75,6 +139,59 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _welcomeAnimationController.dispose();
     _cardsAnimationController.dispose();
     super.dispose();
+  }
+
+  void _navigateToLiveCamera() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const LiveCameraPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  // NEW: Navigation for Analytics Page
+  void _navigateToAnalytics() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const AnalyticsPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
   }
 
   @override
@@ -168,10 +285,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         'Road Safe AI',
                                         style: AppTextStyles.headlineMedium
                                             .copyWith(
-                                          color: Colors.white,
-                                          fontWeight: FontWeight.bold,
-                                          height: 1.1,
-                                        ),
+                                              color: Colors.white,
+                                              fontWeight: FontWeight.bold,
+                                              height: 1.1,
+                                            ),
                                       ),
                                       Text(
                                         'Driver Safety System',
@@ -249,7 +366,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ),
           ),
 
-          // Quick Stats Section
+          // Quick Stats Section (NOW USES LIVE DATA)
           SliverToBoxAdapter(
             child: AnimatedBuilder(
               animation: _cardsAnimationController,
@@ -276,9 +393,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
 
           // Bottom spacing
-          const SliverToBoxAdapter(
-            child: SizedBox(height: 32),
-          ),
+          const SliverToBoxAdapter(child: SizedBox(height: 32)),
         ],
       ),
     );
@@ -305,11 +420,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 width: 1,
               ),
             ),
-            child: Icon(
-              icon,
-              color: Colors.white,
-              size: 22,
-            ),
+            child: Icon(icon, color: Colors.white, size: 22),
           ),
 
           // Badge
@@ -322,15 +433,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 decoration: BoxDecoration(
                   color: AppColors.error,
                   borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: Colors.white,
-                    width: 1.5,
-                  ),
+                  border: Border.all(color: Colors.white, width: 1.5),
                 ),
-                constraints: const BoxConstraints(
-                  minWidth: 16,
-                  minHeight: 16,
-                ),
+                constraints: const BoxConstraints(minWidth: 16, minHeight: 16),
                 child: Text(
                   badgeCount > 99 ? '99+' : badgeCount.toString(),
                   style: AppTextStyles.labelSmall.copyWith(
@@ -438,53 +543,74 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildQuickStatsSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Today\'s Safety Metrics',
-            style: AppTextStyles.headlineSmall.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 16),
-          Row(
+    return StreamBuilder<DrivingSession?>(
+      stream: _dataService.getLastSession(),
+      builder: (context, snapshot) {
+        final lastSession = snapshot.data;
+
+        final driveTime = lastSession != null
+            ? '${lastSession.duration.inHours}h ${lastSession.duration.inMinutes.remainder(60)}m'
+            : 'N/A';
+        final alerts = lastSession?.totalAlerts.toString() ?? 'N/A';
+        final safetyScore =
+            lastSession?.safetyScore.toStringAsFixed(1) ?? 'N/A';
+        final scoreColor = lastSession != null
+            ? lastSession.safetyScore > 80
+                  ? AppColors.success
+                  : lastSession.safetyScore > 50
+                  ? AppColors.warning
+                  : AppColors.error
+            : AppColors.textSecondary;
+
+        return Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 20),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.timer_rounded,
-                  value: '2.5h',
-                  label: 'Drive Time',
-                  color: AppColors.info,
-                  gradientColors: [AppColors.info, AppColors.secondary],
+              Text(
+                'Last Session Metrics',
+                style: AppTextStyles.headlineSmall.copyWith(
+                  fontWeight: FontWeight.bold,
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.warning_rounded,
-                  value: '0',
-                  label: 'Alerts',
-                  color: AppColors.warning,
-                  gradientColors: [AppColors.warning, AppColors.accent],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.trending_up_rounded,
-                  value: '98%',
-                  label: 'Safety Score',
-                  color: AppColors.success,
-                  gradientColors: [AppColors.success, AppColors.quaternary],
-                ),
+              const SizedBox(height: 16),
+              Row(
+                children: [
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: Icons.timer_rounded,
+                      value: driveTime,
+                      label: 'Drive Time',
+                      color: AppColors.info,
+                      gradientColors: [AppColors.info, AppColors.secondary],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: Icons.warning_rounded,
+                      value: alerts,
+                      label: 'Alerts',
+                      color: AppColors.warning,
+                      gradientColors: [AppColors.warning, AppColors.accent],
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _buildStatCard(
+                      icon: Icons.trending_up_rounded,
+                      value: safetyScore,
+                      label: 'Safety Score',
+                      color: scoreColor,
+                      gradientColors: [scoreColor, scoreColor.withOpacity(0.7)],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 
@@ -570,15 +696,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Real-time ESP32 monitoring',
                 color: AppColors.cameraFeed,
                 gradientColors: AppColors.primaryGradient,
-                onTap: () => _showFeatureNotification('Live Camera'),
+                onTap: () => _navigateToLiveCamera(),
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
-                title: 'Smart Analytics',
+                title: 'Analytics',
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
-                onTap: () => _showFeatureNotification('Smart Analytics'),
+                onTap: () =>
+                    _navigateToAnalytics(), // UPDATED: Navigate to Analytics Page
               ),
               FeatureCard(
                 icon: Icons.settings_rounded,
@@ -586,7 +713,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Configure your ESP32 device',
                 color: AppColors.deviceSetup,
                 gradientColors: AppColors.accentGradient,
-                onTap: () => _showFeatureNotification('Device Setup'),
+                onTap: () => _navigateToDeviceSetup(),
               ),
               FeatureCard(
                 icon: Icons.help_outline_rounded,
@@ -594,11 +721,63 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Learn optimal usage patterns',
                 color: AppColors.guidelines,
                 gradientColors: AppColors.secondaryGradient,
-                onTap: () => _showFeatureNotification('Safety Guide'),
+                onTap: () => _navigateToSafetyGuide(),
               ),
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  void _navigateToSafetyGuide() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const SafetyGuidePage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  void _navigateToDeviceSetup() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const DeviceSetupPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween = Tween(
+            begin: begin,
+            end: end,
+          ).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
       ),
     );
   }
@@ -634,15 +813,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
         backgroundColor: AppColors.primary,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         margin: const EdgeInsets.all(16),
         elevation: 8,
       ),
     );
   }
 
+  // ... (Notification and Profile Menu methods remain the same)
   void _showNotifications() {
     showModalBottomSheet(
       context: context,
@@ -655,9 +833,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         builder: (context, scrollController) => Container(
           decoration: const BoxDecoration(
             color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(
-              top: Radius.circular(24),
-            ),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
           ),
           child: Column(
             children: [
@@ -745,9 +921,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       builder: (context) => Container(
         decoration: const BoxDecoration(
           color: AppColors.surface,
-          borderRadius: BorderRadius.vertical(
-            top: Radius.circular(24),
-          ),
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -823,9 +997,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       ),
       onTap: onTap,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-      ),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
     );
   }
 
@@ -842,10 +1014,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       decoration: BoxDecoration(
         color: AppColors.surface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(
-          color: color.withOpacity(0.2),
-          width: 1,
-        ),
+        border: Border.all(color: color.withOpacity(0.2), width: 1),
         boxShadow: [
           BoxShadow(
             color: color.withOpacity(0.1),
@@ -877,10 +1046,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  subtitle,
-                  style: AppTextStyles.bodySmall,
-                ),
+                Text(subtitle, style: AppTextStyles.bodySmall),
                 const SizedBox(height: 8),
                 Text(
                   time,
