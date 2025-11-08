@@ -61,6 +61,12 @@ class AppColors {
     Color(0xFF059669), // Dark Emerald
   ];
 
+  // ADDED: Gradient for Info/Blue actions (Fixes the error)
+  static const List<Color> infoGradient = [
+    Color(0xFF3B82F6), // Info Blue
+    Color(0xFF00BCD4), // Cyan (Quaternary)
+  ];
+
   static const List<Color> darkGradient = [
     Color(0xFF1E293B), // Dark Slate
     Color(0xFF334155), // Slate

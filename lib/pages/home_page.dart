@@ -7,6 +7,8 @@ import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
 import 'safety_guide_page.dart';
 import 'device_setup_page.dart';
+import 'analytics_page.dart'; // NEW
+import '../services/data_service.dart'; // NEW
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -16,6 +18,8 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  final DataService _dataService = DataService(); // NEW
+
   late AnimationController _welcomeAnimationController;
   late AnimationController _cardsAnimationController;
   late Animation<double> _welcomeSlideAnimation;
@@ -27,6 +31,65 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _initializeAnimations();
     _startAnimations();
+    _ensureMockData(); // NEW: Create mock data on startup
+  }
+
+  // NEW: Mock data generation for initial demo
+  void _ensureMockData() async {
+    final sessionsStream = _dataService.getSessions();
+    final firstSnapshot = await sessionsStream.first;
+
+    // Only generate mock data if no sessions exist
+    if (firstSnapshot.isEmpty) {
+      // Simulate a successful recent session (high score)
+      final session1 = DrivingSession(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        startTime: DateTime.now().subtract(const Duration(hours: 3)),
+        endTime: DateTime.now(),
+        duration: const Duration(hours: 3),
+        totalAlerts: 1,
+        safetyScore: 95.5,
+        alerts: [
+          AlertEvent(
+              time: DateTime.now().subtract(const Duration(minutes: 50)),
+              type: 'Yawn Detected'),
+        ],
+      );
+      _dataService.addSession(session1);
+
+      // Simulate an older session with low rest (low score)
+      final session2 = DrivingSession(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        startTime: DateTime.now().subtract(const Duration(days: 2, hours: 5)),
+        endTime: DateTime.now().subtract(const Duration(days: 2, hours: 3)),
+        duration: const Duration(hours: 2),
+        totalAlerts: 4,
+        safetyScore: 68.2,
+        alerts: [
+          AlertEvent(
+              time: DateTime.now()
+                  .subtract(const Duration(days: 2, minutes: 150)),
+              type: 'Eyes Closed'),
+          AlertEvent(
+              time: DateTime.now()
+                  .subtract(const Duration(days: 2, minutes: 140)),
+              type: 'Yawn Detected'),
+        ],
+      );
+      _dataService.addSession(session2);
+
+      // Mock sleep log
+      final sleepLog = SleepLog(
+        id: '',
+        userId: _dataService.currentUser!.uid,
+        sleepTime: DateTime.now().subtract(const Duration(hours: 9)),
+        wakeTime: DateTime.now().subtract(const Duration(hours: 1)),
+        duration: const Duration(hours: 8, minutes: 0),
+      );
+      _dataService.addSleepLog(sleepLog);
+    }
   }
 
   void _initializeAnimations() {
@@ -85,6 +148,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       PageRouteBuilder(
         pageBuilder: (context, animation, secondaryAnimation) =>
             const LiveCameraPage(),
+        transitionsBuilder: (context, animation, secondaryAnimation, child) {
+          const begin = Offset(1.0, 0.0);
+          const end = Offset.zero;
+          const curve = Curves.easeInOut;
+
+          var tween =
+              Tween(begin: begin, end: end).chain(CurveTween(curve: curve));
+
+          return SlideTransition(
+            position: animation.drive(tween),
+            child: child,
+          );
+        },
+        transitionDuration: const Duration(milliseconds: 300),
+      ),
+    );
+  }
+
+  // NEW: Navigation for Analytics Page
+  void _navigateToAnalytics() {
+    Navigator.push(
+      context,
+      PageRouteBuilder(
+        pageBuilder: (context, animation, secondaryAnimation) =>
+            const AnalyticsPage(),
         transitionsBuilder: (context, animation, secondaryAnimation, child) {
           const begin = Offset(1.0, 0.0);
           const end = Offset.zero;
@@ -275,7 +363,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ),
           ),
 
-          // Quick Stats Section
+          // Quick Stats Section (NOW USES LIVE DATA)
           SliverToBoxAdapter(
             child: AnimatedBuilder(
               animation: _cardsAnimationController,
@@ -464,54 +552,77 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildQuickStatsSection() {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            'Today\'s Safety Metrics',
-            style: AppTextStyles.headlineSmall.copyWith(
-              fontWeight: FontWeight.bold,
+    return StreamBuilder<DrivingSession?>(
+        stream: _dataService.getLastSession(),
+        builder: (context, snapshot) {
+          final lastSession = snapshot.data;
+
+          final driveTime = lastSession != null
+              ? '${lastSession.duration.inHours}h ${lastSession.duration.inMinutes.remainder(60)}m'
+              : 'N/A';
+          final alerts = lastSession?.totalAlerts.toString() ?? 'N/A';
+          final safetyScore =
+              lastSession?.safetyScore.toStringAsFixed(1) ?? 'N/A';
+          final scoreColor = lastSession != null
+              ? lastSession.safetyScore > 80
+                  ? AppColors.success
+                  : lastSession.safetyScore > 50
+                      ? AppColors.warning
+                      : AppColors.error
+              : AppColors.textSecondary;
+
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 20),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Last Session Metrics',
+                  style: AppTextStyles.headlineSmall.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.timer_rounded,
+                        value: driveTime,
+                        label: 'Drive Time',
+                        color: AppColors.info,
+                        gradientColors: [AppColors.info, AppColors.secondary],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.warning_rounded,
+                        value: alerts,
+                        label: 'Alerts',
+                        color: AppColors.warning,
+                        gradientColors: [AppColors.warning, AppColors.accent],
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _buildStatCard(
+                        icon: Icons.trending_up_rounded,
+                        value: safetyScore,
+                        label: 'Safety Score',
+                        color: scoreColor,
+                        gradientColors: [
+                          scoreColor,
+                          scoreColor.withOpacity(0.7)
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.timer_rounded,
-                  value: '2.5h',
-                  label: 'Drive Time',
-                  color: AppColors.info,
-                  gradientColors: [AppColors.info, AppColors.secondary],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.warning_rounded,
-                  value: '0',
-                  label: 'Alerts',
-                  color: AppColors.warning,
-                  gradientColors: [AppColors.warning, AppColors.accent],
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _buildStatCard(
-                  icon: Icons.trending_up_rounded,
-                  value: '98%',
-                  label: 'Safety Score',
-                  color: AppColors.success,
-                  gradientColors: [AppColors.success, AppColors.quaternary],
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
+          );
+        });
   }
 
   Widget _buildStatCard({
@@ -596,7 +707,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'Real-time ESP32 monitoring',
                 color: AppColors.cameraFeed,
                 gradientColors: AppColors.primaryGradient,
-                onTap: () => _navigateToLiveCamera(), // Update this line
+                onTap: () => _navigateToLiveCamera(),
               ),
               FeatureCard(
                 icon: Icons.analytics_rounded,
@@ -604,7 +715,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
-                onTap: () => _showFeatureNotification('Smart Analytics'),
+                onTap: () =>
+                    _navigateToAnalytics(), // UPDATED: Navigate to Analytics Page
               ),
               FeatureCard(
                 icon: Icons.settings_rounded,
@@ -717,7 +829,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // ... (rest of the methods remain the same as before)
+  // ... (Notification and Profile Menu methods remain the same)
   void _showNotifications() {
     showModalBottomSheet(
       context: context,
