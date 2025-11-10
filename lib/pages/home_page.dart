@@ -9,6 +9,10 @@ import 'safety_guide_page.dart';
 import 'device_setup_page.dart';
 import 'analytics_page.dart'; // NEW
 import '../services/data_service.dart'; // NEW
+import 'settings_page.dart';
+import 'profile_page.dart'; // NEW IMPORT
+// import 'help_support_page.dart'; // NEW IMPORT
+import 'login_page.dart'; // NEW IMPORT for Logout
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -285,10 +289,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         'Road Safe AI',
                                         style: AppTextStyles.headlineMedium
                                             .copyWith(
-                                              color: Colors.white,
-                                              fontWeight: FontWeight.bold,
-                                              height: 1.1,
-                                            ),
+                                          color: Colors.white,
+                                          fontWeight: FontWeight.bold,
+                                          height: 1.1,
+                                        ),
                                       ),
                                       Text(
                                         'Driver Safety System',
@@ -556,10 +560,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             lastSession?.safetyScore.toStringAsFixed(1) ?? 'N/A';
         final scoreColor = lastSession != null
             ? lastSession.safetyScore > 80
-                  ? AppColors.success
-                  : lastSession.safetyScore > 50
-                  ? AppColors.warning
-                  : AppColors.error
+                ? AppColors.success
+                : lastSession.safetyScore > 50
+                    ? AppColors.warning
+                    : AppColors.error
             : AppColors.textSecondary;
 
         return Padding(
@@ -820,8 +824,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // ... (Notification and Profile Menu methods remain the same)
   void _showNotifications() {
+    // ... (Notifications implementation remains the same)
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
@@ -914,6 +918,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  // UPDATED: Implementation of navigation and logout logic
   void _showProfileMenu() {
     showModalBottomSheet(
       context: context,
@@ -936,40 +941,61 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               ),
             ),
             const SizedBox(height: 24),
+            // Profile Navigation
             _buildMenuTile(
               icon: Icons.person_rounded,
               title: 'Profile',
               onTap: () {
-                Navigator.pop(context); // closes drawer first
+                Navigator.pop(context); // Close the modal
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) =>
+                          const ProfilePage()), // Navigate to new ProfilePage
+                );
+              },
+            ),
+            // Settings Navigation (Existing)
+            _buildMenuTile(
+              icon: Icons.settings_rounded,
+              title: 'Settings',
+              onTap: () {
+                Navigator.pop(context); // Close the modal
                 Navigator.push(
                   context,
                   MaterialPageRoute(builder: (context) => const SettingsPage()),
                 );
               },
             ),
-            _buildMenuTile(
-              icon: Icons.settings_rounded,
-              title: 'Settings',
-              onTap: () {
-                Navigator.pop(context);
-                Navigator.pushReplacement(
-                  context,
-                  MaterialPageRoute(builder: (context) => const SettingsPage()),
-                );
-              },
-            ),
-            _buildMenuTile(
-              icon: Icons.help_outline_rounded,
-              title: 'Help & Support',
-              onTap: () => Navigator.pop(context),
-            ),
+            // Help & Support Navigation
+            // _buildMenuTile(
+            //   icon: Icons.help_outline_rounded,
+            //   title: 'Help & Support',
+            //   onTap: () {
+            //     Navigator.pop(context); // Close the modal
+            //     Navigator.push(
+            //       context,
+            //       MaterialPageRoute(
+            //           builder: (context) =>
+            //               const HelpSupportPage()), // Navigate to new HelpSupportPage
+            //     );
+            //   },
+            // ),
+            // Logout Action
             _buildMenuTile(
               icon: Icons.logout_rounded,
               title: 'Logout',
               color: AppColors.error,
               onTap: () async {
-                Navigator.pop(context);
-                await FirebaseAuth.instance.signOut();
+                // Show a confirmation dialog (instead of alert)
+                final confirmed = await _showLogoutConfirmation(context);
+                if (confirmed) {
+                  // Perform logout and navigate to Login page (assumed to be LoginPage)
+                  await FirebaseAuth.instance.signOut();
+                  // The AuthWrapper in main.dart will handle navigation to LoginPage
+                }
+                Navigator.pop(
+                    context); // Close the modal (if confirmation was shown or not)
               },
             ),
             const SizedBox(height: 16),
@@ -977,6 +1003,48 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         ),
       ),
     );
+  }
+
+  // NEW: Logout Confirmation Dialog
+  Future<bool> _showLogoutConfirmation(BuildContext context) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: AppColors.surface,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Text(
+              'Confirm Logout',
+              style: AppTextStyles.titleLarge
+                  .copyWith(color: AppColors.textPrimary),
+            ),
+            content: Text(
+              'Are you sure you want to log out of Road Safe AI?',
+              style: AppTextStyles.bodyMedium
+                  .copyWith(color: AppColors.textSecondary),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text('Cancel',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(color: AppColors.primary)),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.error,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12)),
+                ),
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text('Logout',
+                    style:
+                        AppTextStyles.bodyMedium.copyWith(color: Colors.white)),
+              ),
+            ],
+          ),
+        ) ??
+        false;
   }
 
   Widget _buildMenuTile({
