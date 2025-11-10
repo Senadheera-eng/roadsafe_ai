@@ -11,7 +11,7 @@ import 'analytics_page.dart'; // NEW
 import '../services/data_service.dart'; // NEW
 import 'settings_page.dart';
 import 'profile_page.dart'; // NEW IMPORT
-// import 'help_support_page.dart'; // NEW IMPORT
+import 'help_support_page.dart'; // NEW IMPORT
 import 'login_page.dart'; // NEW IMPORT for Logout
 
 class HomePage extends StatefulWidget {
@@ -968,19 +968,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               },
             ),
             // Help & Support Navigation
-            // _buildMenuTile(
-            //   icon: Icons.help_outline_rounded,
-            //   title: 'Help & Support',
-            //   onTap: () {
-            //     Navigator.pop(context); // Close the modal
-            //     Navigator.push(
-            //       context,
-            //       MaterialPageRoute(
-            //           builder: (context) =>
-            //               const HelpSupportPage()), // Navigate to new HelpSupportPage
-            //     );
-            //   },
-            // ),
+            _buildMenuTile(
+              icon: Icons.help_outline_rounded,
+              title: 'Help & Support',
+              onTap: () {
+                Navigator.pop(context); // Close the modal
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                      builder: (context) =>
+                          const HelpSupportPage()), // Navigate to new HelpSupportPage
+                );
+              },
+            ),
             // Logout Action
             _buildMenuTile(
               icon: Icons.logout_rounded,
