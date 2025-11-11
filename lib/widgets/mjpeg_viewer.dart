@@ -13,15 +13,15 @@ class MjpegViewer extends StatefulWidget {
   final bool enableDrowsinessDetection;
   final Function(DrowsinessResult)? onDrowsinessDetected;
 
-  const MjpegViewer({
-    Key? key,
-    required this.stream,
-    this.isLive = true,
-    this.error,
-    this.loading,
-    this.enableDrowsinessDetection = false,
-    this.onDrowsinessDetected,
-  }) : super(key: key);
+  const MjpegViewer(
+      {Key? key,
+      required this.stream,
+      this.isLive = true,
+      this.error,
+      this.loading,
+      this.enableDrowsinessDetection = false,
+      this.onDrowsinessDetected})
+      : super(key: key);
 
   @override
   State<MjpegViewer> createState() => _MjpegViewerState();
