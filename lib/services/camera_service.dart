@@ -268,6 +268,7 @@ class CameraService {
 
     List<String> knownIPs = [
       '10.19.80.42', // Your specific IP
+      '10.251.96.17', // Another known IP
       '192.168.1.100',
       '192.168.1.101',
       '192.168.4.1', // ESP32 AP mode default
