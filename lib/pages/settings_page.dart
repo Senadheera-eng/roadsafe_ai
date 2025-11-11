@@ -3,8 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'home_page.dart';
 import '../widgets/glass_card.dart';
 import 'help_support_page.dart';
-import '../theme/app_theme.dart'; // Import AppTheme to access the notifier
-import '../theme/app_colors.dart'; // Import AppColors for dynamic background
+import '../theme/app_colors.dart';
 
 class SettingsPage extends StatefulWidget {
   const SettingsPage({super.key});
@@ -17,16 +16,17 @@ class _SettingsPageState extends State<SettingsPage> {
   // Toggle states
   bool _alertsEnabled = true;
   bool _notificationsEnabled = false;
-  // Initialize dark mode state based on current global value
-  bool _darkModeEnabled = AppTheme.themeModeNotifier.value == ThemeMode.dark;
 
   final TextEditingController _usernameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
+  // Colors for consistent gradient background look
+  static const Color textColor = Colors.white;
+  static const Color secondaryTextColor = Colors.white70;
+
   @override
   void initState() {
     super.initState();
-    // Initialize username controller with current display name if available
     _usernameController.text =
         FirebaseAuth.instance.currentUser?.displayName ?? '';
   }
@@ -38,7 +38,7 @@ class _SettingsPageState extends State<SettingsPage> {
     super.dispose();
   }
 
-  // --- Account Management Methods (Same as previous version) ---
+  // --- Account Management Methods ---
 
   Future<void> _changeUsername() async {
     final user = FirebaseAuth.instance.currentUser;
@@ -70,9 +70,7 @@ class _SettingsPageState extends State<SettingsPage> {
     if (result != null && result.isNotEmpty && result != user.displayName) {
       try {
         await user.updateDisplayName(result);
-        setState(() {
-          // Force a state update to refresh any UI elements using the display name
-        });
+        setState(() {});
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Username updated successfully!')),
         );
@@ -88,7 +86,6 @@ class _SettingsPageState extends State<SettingsPage> {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
 
-    // Step 1: Show a complex dialog to gather both current and new passwords
     final result = await showDialog<Map<String, String>?>(
       context: context,
       builder: (context) {
@@ -148,22 +145,18 @@ class _SettingsPageState extends State<SettingsPage> {
     }
 
     try {
-      // Step 2: Re-authenticate the user with their current password
       AuthCredential credential = EmailAuthProvider.credential(
-        email: user.email!, // Assuming email is the identifier
+        email: user.email!,
         password: currentPassword,
       );
 
       await user.reauthenticateWithCredential(credential);
-
-      // Step 3: Change the password if re-authentication succeeds
       await user.updatePassword(newPassword);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Password updated successfully!')),
       );
 
-      // Sign out the user after a successful password change for security
       await FirebaseAuth.instance.signOut();
     } on FirebaseAuthException catch (e) {
       String message;
@@ -180,7 +173,7 @@ class _SettingsPageState extends State<SettingsPage> {
       );
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('An unexpected error occurred.')),
+        const SnackBar(content: Text('An unexpected error occurred.')),
       );
     }
   }
@@ -189,63 +182,58 @@ class _SettingsPageState extends State<SettingsPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Determine if we are in Dark Mode currently
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
     return Scaffold(
       extendBodyBehindAppBar: true,
-      // AppBar items now dynamically change color based on the theme
       appBar: AppBar(
-        title: Text("Settings",
-            style: TextStyle(
-                color: isDarkMode ? AppColors.textPrimaryDark : Colors.white)),
+        title: const Text("Settings", style: TextStyle(color: textColor)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back,
-              color: isDarkMode ? AppColors.textPrimaryDark : Colors.white),
+          icon: const Icon(Icons.arrow_back, color: textColor),
           onPressed: () {
             Navigator.of(context).pop();
           },
         ),
       ),
       body: Container(
-        // Conditional background: Gradient in Light mode, solid color in Dark mode
-        decoration: BoxDecoration(
-          gradient: isDarkMode
-              ? null // No gradient in dark mode, rely on scaffold background (AppColors.backgroundDark)
-              : const LinearGradient(
-                  colors: [
-                    Color.fromARGB(255, 165, 207, 243),
-                    Color(0xFF00f2fe)
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-          color: isDarkMode ? AppColors.backgroundDark : null,
+        // ** Gradient Background for attractive UI **
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: AppColors.oceanGradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
         ),
         child: ListView(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(24),
           children: [
             const SizedBox(height: 80),
+
+            // --- ALERT & NOTIFICATION SETTINGS ---
+            Padding(
+              padding: const EdgeInsets.only(left: 8.0, bottom: 12.0),
+              child: Text(
+                "System & Alerts",
+                style: TextStyle(
+                  color: textColor,
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
 
             // Alerts Toggle
             GlassCard(
               child: SwitchListTile(
-                activeColor: Colors.cyanAccent,
-                secondary: Icon(Icons.notifications_active,
-                    color:
-                        isDarkMode ? AppColors.textPrimaryDark : Colors.white),
-                title: Text("Drowsiness Alerts",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textPrimaryDark
-                            : Colors.white)),
-                subtitle: Text("Enable/disable alerts",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textSecondaryDark
-                            : Colors.white70)),
+                activeColor: AppColors.accent,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                secondary: const Icon(Icons.notifications_active_rounded,
+                    color: AppColors.accent),
+                title: const Text("Drowsiness Alerts",
+                    style: TextStyle(color: textColor)),
+                subtitle: const Text(
+                    "Enable/disable immediate audio/vibration alerts",
+                    style: TextStyle(color: secondaryTextColor)),
                 value: _alertsEnabled,
                 onChanged: (val) {
                   setState(() {
@@ -259,20 +247,14 @@ class _SettingsPageState extends State<SettingsPage> {
             // Notifications Toggle
             GlassCard(
               child: SwitchListTile(
-                activeColor: Colors.cyanAccent,
-                secondary: Icon(Icons.notifications,
-                    color:
-                        isDarkMode ? AppColors.textPrimaryDark : Colors.white),
-                title: Text("Push Notifications",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textPrimaryDark
-                            : Colors.white)),
-                subtitle: Text("Daily/weekly safety reports",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textSecondaryDark
-                            : Colors.white70)),
+                activeColor: AppColors.secondary,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 20),
+                secondary: const Icon(Icons.notifications_rounded,
+                    color: AppColors.secondary),
+                title: const Text("Push Notifications",
+                    style: TextStyle(color: textColor)),
+                subtitle: const Text("Daily/weekly safety reports",
+                    style: TextStyle(color: secondaryTextColor)),
                 value: _notificationsEnabled,
                 onChanged: (val) {
                   setState(() {
@@ -281,42 +263,15 @@ class _SettingsPageState extends State<SettingsPage> {
                 },
               ),
             ),
-            const SizedBox(height: 16),
-
-            // Dark Mode Toggle
-            GlassCard(
-              child: SwitchListTile(
-                activeColor: Colors.cyanAccent,
-                secondary: Icon(Icons.dark_mode,
-                    color:
-                        isDarkMode ? AppColors.textPrimaryDark : Colors.white),
-                title: Text("Dark Mode",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textPrimaryDark
-                            : Colors.white)),
-                value: _darkModeEnabled,
-                onChanged: (val) {
-                  setState(() {
-                    _darkModeEnabled = val;
-                  });
-                  // ** CORE DARK MODE LOGIC **
-                  AppTheme.themeModeNotifier.value =
-                      val ? ThemeMode.dark : ThemeMode.light;
-                },
-              ),
-            ),
             const SizedBox(height: 32),
 
             // --- ACCOUNT MANAGEMENT SECTION ---
             Padding(
-              padding: const EdgeInsets.only(left: 8.0, bottom: 8.0),
+              padding: const EdgeInsets.only(left: 8.0, bottom: 12.0),
               child: Text(
-                "Account",
+                "Account Security",
                 style: TextStyle(
-                  color: isDarkMode
-                      ? AppColors.textPrimaryDark.withOpacity(0.9)
-                      : Colors.white.withOpacity(0.9),
+                  color: textColor,
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
                 ),
@@ -326,34 +281,30 @@ class _SettingsPageState extends State<SettingsPage> {
             // Change Username
             GlassCard(
               child: ListTile(
-                leading: Icon(Icons.person_outline,
-                    color:
-                        isDarkMode ? AppColors.textPrimaryDark : Colors.white),
-                title: Text("Change Username",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textPrimaryDark
-                            : Colors.white)),
+                leading: const Icon(Icons.person_outline_rounded,
+                    color: AppColors.info),
+                title: const Text("Change Username",
+                    style: TextStyle(color: textColor)),
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: secondaryTextColor),
                 onTap: _changeUsername,
               ),
             ),
             const SizedBox(height: 16),
 
-            // Change Password (Now handles re-authentication)
+            // Change Password
             GlassCard(
               child: ListTile(
-                leading: Icon(Icons.lock_outline,
-                    color:
-                        isDarkMode ? AppColors.textPrimaryDark : Colors.white),
-                title: Text("Change Password",
-                    style: TextStyle(
-                        color: isDarkMode
-                            ? AppColors.textPrimaryDark
-                            : Colors.white)),
+                leading: const Icon(Icons.lock_outline_rounded,
+                    color: AppColors.error),
+                title: const Text("Change Password",
+                    style: TextStyle(color: textColor)),
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: secondaryTextColor),
                 onTap: _changePassword,
               ),
             ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 32),
           ],
         ),
       ),

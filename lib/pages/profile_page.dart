@@ -7,7 +7,6 @@ import '../widgets/glass_card.dart';
 // Import necessary dart:math for random image simulation
 import 'dart:math';
 
-// 1. Convert to StatefulWidget to handle local image state
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
 
@@ -16,20 +15,15 @@ class ProfilePage extends StatefulWidget {
 }
 
 class _ProfilePageState extends State<ProfilePage> {
-  // Placeholder for the profile image URL (simulate Firebase PhotoURL)
-  // We use a timestamp to make the image URL appear 'new' after an update.
   String? _profileImageUrl;
 
   @override
   void initState() {
     super.initState();
-    // Use the actual Firebase photoURL if available
     _profileImageUrl = FirebaseAuth.instance.currentUser?.photoURL;
   }
 
   // --- Photo Management Logic ---
-
-  // Helper to simulate image URL generation
   String _generateSimulatedImageUrl() {
     final seed = DateTime.now().millisecondsSinceEpoch;
     final size = Random(seed).nextInt(50) + 100; // Random size for variance
@@ -37,23 +31,15 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _pickAndSetProfilePhoto() async {
-    // 1. Simulate image picking/uploading to storage (Firebase Storage)
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('Picking and uploading new photo...')),
     );
-
-    // 2. Simulate successful upload and getting a new URL
     final newUrl = _generateSimulatedImageUrl();
-
-    // 3. Update Firebase User profile (using the live user object)
     try {
       await FirebaseAuth.instance.currentUser?.updatePhotoURL(newUrl);
-
-      // 4. Update the local state to reflect the change
       setState(() {
         _profileImageUrl = FirebaseAuth.instance.currentUser?.photoURL;
       });
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Profile photo updated successfully!')),
       );
@@ -67,17 +53,11 @@ class _ProfilePageState extends State<ProfilePage> {
   void _deleteProfilePhoto() async {
     final confirmed = await _showDeleteConfirmation(context);
     if (confirmed) {
-      // 1. Delete the image from Storage (simulated)
-
-      // 2. Remove the URL from the Firebase User profile (using the live user object)
       try {
         await FirebaseAuth.instance.currentUser?.updatePhotoURL(null);
-
-        // 3. Update the local state
         setState(() {
           _profileImageUrl = null;
         });
-
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Profile photo removed successfully.')),
         );
@@ -89,31 +69,18 @@ class _ProfilePageState extends State<ProfilePage> {
     }
   }
 
-  // NEW: Logout Confirmation Dialog (adapted for photo deletion)
   Future<bool> _showDeleteConfirmation(BuildContext context) async {
-    // Determine if we are in Dark Mode currently for dialog styling
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
     return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
-            backgroundColor:
-                isDarkMode ? AppColors.surfaceDark : AppColors.surface,
+            backgroundColor: AppColors.surface,
             shape:
                 RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-            title: Text(
-              'Confirm Deletion',
-              style: AppTextStyles.titleLarge.copyWith(
-                  color: isDarkMode
-                      ? AppColors.textPrimaryDark
-                      : AppColors.textPrimary),
-            ),
+            title: Text('Confirm Deletion', style: AppTextStyles.titleLarge),
             content: Text(
               'Are you sure you want to remove your profile photo?',
-              style: AppTextStyles.bodyMedium.copyWith(
-                  color: isDarkMode
-                      ? AppColors.textSecondaryDark
-                      : AppColors.textSecondary),
+              style: AppTextStyles.bodyMedium
+                  .copyWith(color: AppColors.textSecondary),
             ),
             actions: [
               TextButton(
@@ -140,16 +107,13 @@ class _ProfilePageState extends State<ProfilePage> {
   }
 
   void _showImageOptions() {
-    // Determine if we are in Dark Mode currently for modal styling
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
     showModalBottomSheet(
       context: context,
       backgroundColor: Colors.transparent,
       builder: (context) => Container(
-        decoration: BoxDecoration(
-          color: isDarkMode ? AppColors.surfaceDark : AppColors.surface,
-          borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+        decoration: const BoxDecoration(
+          color: AppColors.surface,
+          borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
         ),
         padding: const EdgeInsets.all(24),
         child: Column(
@@ -159,14 +123,12 @@ class _ProfilePageState extends State<ProfilePage> {
               width: 40,
               height: 4,
               decoration: BoxDecoration(
-                color: isDarkMode ? AppColors.textHintDark : AppColors.textHint,
+                color: AppColors.textHint,
                 borderRadius: BorderRadius.circular(2),
               ),
             ),
             const SizedBox(height: 24),
-            // Option 1: Add/Change Photo
             _buildOptionTile(
-              isDarkMode: isDarkMode,
               icon: Icons.camera_alt_rounded,
               title: _profileImageUrl == null
                   ? 'Add Profile Photo'
@@ -176,10 +138,8 @@ class _ProfilePageState extends State<ProfilePage> {
                 _pickAndSetProfilePhoto();
               },
             ),
-            // Option 2: Delete Photo (only if one exists)
             if (_profileImageUrl != null)
               _buildOptionTile(
-                isDarkMode: isDarkMode,
                 icon: Icons.delete_forever_rounded,
                 title: 'Remove Photo',
                 color: AppColors.error,
@@ -199,11 +159,9 @@ class _ProfilePageState extends State<ProfilePage> {
     required IconData icon,
     required String title,
     required VoidCallback onTap,
-    required bool isDarkMode,
     Color? color,
   }) {
-    final itemColor = color ??
-        (isDarkMode ? AppColors.textPrimaryDark : AppColors.textPrimary);
+    final itemColor = color ?? AppColors.textPrimary;
 
     return ListTile(
       leading: Icon(icon, color: itemColor),
@@ -224,52 +182,40 @@ class _ProfilePageState extends State<ProfilePage> {
   @override
   Widget build(BuildContext context) {
     final user = FirebaseAuth.instance.currentUser;
-    // We are reading directly from the user object here, which is updated after
-    // updatePhotoURL is called, making the UI reactive.
     final userName = user?.displayName ?? 'Road Safe User';
     final userEmail = user?.email ?? 'anonymous.user@roadsafeguest.com';
     final userId = user?.uid ?? 'N/A';
 
-    // Determine if we are in Dark Mode currently
-    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
-
-    // Adjust colors for dark mode UI elements that rely on colors not in the theme
-    final textColor = isDarkMode ? AppColors.textPrimaryDark : Colors.white;
-    final secondaryTextColor =
-        isDarkMode ? AppColors.textSecondaryDark : Colors.white70;
+    // Text colors are set to white/light to contrast with the dark gradient
+    const Color textColor = Colors.white;
+    const Color secondaryTextColor = Colors.white70;
 
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: Text("User Profile", style: TextStyle(color: textColor)),
+        title: const Text("User Profile", style: TextStyle(color: textColor)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: Icon(Icons.arrow_back, color: textColor),
+          icon: const Icon(Icons.arrow_back, color: textColor),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: Container(
-        decoration: BoxDecoration(
-          // Conditional background: Gradient in Light mode, solid color in Dark mode
-          gradient: isDarkMode
-              ? null
-              : const LinearGradient(
-                  colors: [
-                    Color.fromARGB(255, 165, 207, 243),
-                    Color(0xFF00f2fe)
-                  ],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-          color: isDarkMode ? AppColors.backgroundDark : null,
+        // ** Gradient Background for attractive UI **
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            colors: AppColors.oceanGradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+          ),
         ),
         child: ListView(
           padding: const EdgeInsets.all(24),
           children: [
             const SizedBox(height: 80),
 
-            // Profile Header Card
+            // Profile Header Card (Uses GlassCard for the aesthetic)
             GlassCard(
               padding: const EdgeInsets.all(30),
               child: Column(
@@ -282,14 +228,10 @@ class _ProfilePageState extends State<ProfilePage> {
                         width: 100,
                         height: 100,
                         decoration: BoxDecoration(
-                          color: isDarkMode
-                              ? AppColors.surfaceVariantDark
-                              : Colors.white.withOpacity(0.3),
+                          color: Colors.white.withOpacity(0.3),
                           shape: BoxShape.circle,
                           border: Border.all(
-                            color: isDarkMode
-                                ? AppColors.surfaceVariantDark
-                                : Colors.white.withOpacity(0.5),
+                            color: Colors.white.withOpacity(0.5),
                             width: 3,
                           ),
                         ),
@@ -322,9 +264,7 @@ class _ProfilePageState extends State<ProfilePage> {
                               color: AppColors.primary,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                color: isDarkMode
-                                    ? AppColors.surfaceDark
-                                    : Colors.white,
+                                color: Colors.white,
                                 width: 2,
                               ),
                             ),
@@ -371,13 +311,11 @@ class _ProfilePageState extends State<ProfilePage> {
               icon: Icons.email_rounded,
               title: 'Email',
               subtitle: userEmail,
-              isDarkMode: isDarkMode,
             ),
             _buildDetailTile(
               icon: Icons.vpn_key_rounded,
               title: 'User ID (UID)',
               subtitle: userId,
-              isDarkMode: isDarkMode,
             ),
             _buildDetailTile(
               icon: Icons.join_full_rounded,
@@ -385,7 +323,6 @@ class _ProfilePageState extends State<ProfilePage> {
               subtitle: user?.metadata.creationTime != null
                   ? 'Joined: ${user!.metadata.creationTime!.year}-${user.metadata.creationTime!.month.toString().padLeft(2, '0')}'
                   : 'N/A',
-              isDarkMode: isDarkMode,
             ),
             const SizedBox(height: 24),
 
@@ -402,7 +339,7 @@ class _ProfilePageState extends State<ProfilePage> {
               child: ListTile(
                 leading: const Icon(Icons.videocam_rounded,
                     color: AppColors.success),
-                title: Text('ESP32 CAM Module',
+                title: const Text('ESP32 CAM Module',
                     style: TextStyle(color: textColor)),
                 trailing: Container(
                   padding:
@@ -430,12 +367,10 @@ class _ProfilePageState extends State<ProfilePage> {
     required IconData icon,
     required String title,
     required String subtitle,
-    required bool isDarkMode,
   }) {
-    final textColor = isDarkMode ? AppColors.textPrimaryDark : Colors.white;
-    final secondaryTextColor = isDarkMode
-        ? AppColors.textSecondaryDark
-        : Colors.white.withOpacity(0.8);
+    // Colors are hardcoded to contrast with the background gradient
+    const Color textColor = Colors.white;
+    const Color secondaryTextColor = Colors.white70;
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),

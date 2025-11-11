@@ -6,23 +6,28 @@ import '../widgets/glass_card.dart';
 class HelpSupportPage extends StatelessWidget {
   const HelpSupportPage({super.key});
 
+  // Colors for consistent gradient background look
+  static const Color textColor = Colors.white;
+  static const Color secondaryTextColor = Colors.white70;
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
-        title: const Text("Help & Support"),
+        title: const Text("Help & Support", style: TextStyle(color: textColor)),
         backgroundColor: Colors.transparent,
         elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          icon: const Icon(Icons.arrow_back, color: textColor),
           onPressed: () => Navigator.of(context).pop(),
         ),
       ),
       body: Container(
+        // ** Gradient Background for attractive UI **
         decoration: const BoxDecoration(
           gradient: LinearGradient(
-            colors: [Color.fromARGB(255, 165, 207, 243), Color(0xFF00f2fe)],
+            colors: AppColors.oceanGradient,
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
@@ -35,7 +40,7 @@ class HelpSupportPage extends StatelessWidget {
             Text(
               'We are here to help you drive safe.',
               style: AppTextStyles.headlineMedium.copyWith(
-                color: Colors.white,
+                color: textColor,
                 fontWeight: FontWeight.bold,
               ),
             ),
@@ -45,7 +50,7 @@ class HelpSupportPage extends StatelessWidget {
             Text(
               'Frequently Asked Questions (FAQ)',
               style: AppTextStyles.titleLarge.copyWith(
-                color: Colors.white,
+                color: textColor,
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -71,19 +76,20 @@ class HelpSupportPage extends StatelessWidget {
             Text(
               'Contact Support',
               style: AppTextStyles.titleLarge.copyWith(
-                color: Colors.white,
+                color: textColor,
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 12),
             GlassCard(
               child: ListTile(
-                leading: const Icon(Icons.email_rounded, color: Colors.white),
+                leading: const Icon(Icons.email_rounded, color: AppColors.info),
                 title: const Text('Email Support',
-                    style: TextStyle(color: Colors.white)),
+                    style: TextStyle(color: textColor)),
                 subtitle: const Text('support@roadsafeai.com',
-                    style: TextStyle(color: Colors.white70)),
-                trailing: const Icon(Icons.chevron_right, color: Colors.white),
+                    style: TextStyle(color: secondaryTextColor)),
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: secondaryTextColor),
                 onTap: () {
                   // TODO: Implement email intent
                 },
@@ -92,12 +98,14 @@ class HelpSupportPage extends StatelessWidget {
             const SizedBox(height: 12),
             GlassCard(
               child: ListTile(
-                leading: const Icon(Icons.call_rounded, color: Colors.white),
+                leading:
+                    const Icon(Icons.call_rounded, color: AppColors.success),
                 title: const Text('Emergency Line',
-                    style: TextStyle(color: Colors.white)),
+                    style: TextStyle(color: textColor)),
                 subtitle: const Text('+1 (800) 555-SAFE (Placeholder)',
-                    style: TextStyle(color: Colors.white70)),
-                trailing: const Icon(Icons.chevron_right, color: Colors.white),
+                    style: TextStyle(color: secondaryTextColor)),
+                trailing: const Icon(Icons.chevron_right_rounded,
+                    color: secondaryTextColor),
                 onTap: () {
                   // TODO: Implement phone call intent
                 },
@@ -113,29 +121,33 @@ class HelpSupportPage extends StatelessWidget {
   Widget _buildFAQTile({required String title, required String content}) {
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
-      child: ExpansionTile(
-        tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
-        iconColor: Colors.white,
-        collapsedIconColor: Colors.white70,
-        title: Text(
-          title,
-          style: AppTextStyles.titleMedium.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
-            child: Text(
-              content,
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: Colors.white.withOpacity(0.8),
-                height: 1.5,
-              ),
+      child: Theme(
+        // Override theme data specifically for the ExpansionTile to ensure color contrast
+        data: ThemeData(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          tilePadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 8),
+          iconColor: textColor,
+          collapsedIconColor: secondaryTextColor,
+          title: Text(
+            title,
+            style: AppTextStyles.titleMedium.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w500,
             ),
           ),
-        ],
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+              child: Text(
+                content,
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: secondaryTextColor,
+                  height: 1.5,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }
