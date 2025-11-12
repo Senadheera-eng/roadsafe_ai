@@ -76,11 +76,38 @@ class AppColors {
     Color(0xFF059669), // Dark Emerald
   ];
 
-  // ADDED: Gradient for Info/Blue actions (Fixes the error)
+  // ADDED: Gradient for Info/Blue actions
   static const List<Color> infoGradient = [
     Color(0xFF3B82F6), // Info Blue
     Color(0xFF00BCD4), // Cyan (Quaternary)
   ];
+
+  // ========================================
+  // ADDED: Individual color gradients for UI components
+  // These are used in profile_page, settings_page, and help_support_page
+  // ========================================
+
+  static const List<Color> blueGradient = [
+    Color(0xFF0066FF), // Electric Blue
+    Color(0xFF00CCFF), // Bright Cyan
+  ];
+
+  static const List<Color> purpleGradient = [
+    Color(0xFF8B5CF6), // Vibrant Purple
+    Color(0xFF6366F1), // Indigo
+  ];
+
+  static const List<Color> orangeGradient = [
+    Color(0xFFFF6B35), // Vibrant Orange
+    Color(0xFFFF8C42), // Light Orange
+  ];
+
+  static const List<Color> greenGradient = [
+    Color(0xFF10B981), // Emerald Green
+    Color(0xFF34D399), // Light Emerald
+  ];
+
+  // ========================================
 
   static const List<Color> darkGradient = [
     Color(0xFF1E293B), // Dark Slate
