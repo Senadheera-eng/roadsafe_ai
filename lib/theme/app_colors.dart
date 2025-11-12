@@ -26,19 +26,34 @@ class AppColors {
   static const Color error = Color(0xFFEF4444); // Red
   static const Color info = Color(0xFF3B82F6); // Blue
 
-  // Background & Surface Colors
+  // --- Background & Surface Colors ---
+
+  // Light Mode
   static const Color background = Color(0xFFF8FAFC); // Very Light Blue Gray
   static const Color surface = Colors.white;
   static const Color surfaceVariant = Color(0xFFF1F5F9); // Light Blue Gray
-  static const Color cardShadow = Color(0x1A000000); // 10% Black
 
-  // Text Colors
+  // Dark Mode (NEW)
+  static const Color backgroundDark = Color(0xFF121212); // Deep Black/Grey
+  static const Color surfaceDark = Color(0xFF1E1E1E); // Darker Surface
+  static const Color surfaceVariantDark = Color(0xFF2C2C2C); // Dark Gray
+
+  static const Color cardShadow =
+      Color(0x1A000000); // 10% Black (Less visible in dark mode)
+
+  // --- Text Colors ---
+  // Text for Light Backgrounds
   static const Color textPrimary = Color(0xFF0F172A); // Dark Slate
   static const Color textSecondary = Color(0xFF64748B); // Slate Gray
   static const Color textHint = Color(0xFFCBD5E1); // Light Slate
   static const Color onPrimary = Colors.white;
   static const Color onSecondary = Colors.white;
   static const Color onSurface = Color(0xFF0F172A);
+
+  // Text for Dark Backgrounds (NEW)
+  static const Color textPrimaryDark = Colors.white;
+  static const Color textSecondaryDark = Color(0xFF94A3B8); // Light Slate Gray
+  static const Color textHintDark = Color(0xFF475569); // Darker Hint
 
   // Modern Gradient Combinations
   static const List<Color> primaryGradient = [
@@ -61,11 +76,38 @@ class AppColors {
     Color(0xFF059669), // Dark Emerald
   ];
 
-  // ADDED: Gradient for Info/Blue actions (Fixes the error)
+  // ADDED: Gradient for Info/Blue actions
   static const List<Color> infoGradient = [
     Color(0xFF3B82F6), // Info Blue
     Color(0xFF00BCD4), // Cyan (Quaternary)
   ];
+
+  // ========================================
+  // ADDED: Individual color gradients for UI components
+  // These are used in profile_page, settings_page, and help_support_page
+  // ========================================
+
+  static const List<Color> blueGradient = [
+    Color(0xFF0066FF), // Electric Blue
+    Color(0xFF00CCFF), // Bright Cyan
+  ];
+
+  static const List<Color> purpleGradient = [
+    Color(0xFF8B5CF6), // Vibrant Purple
+    Color(0xFF6366F1), // Indigo
+  ];
+
+  static const List<Color> orangeGradient = [
+    Color(0xFFFF6B35), // Vibrant Orange
+    Color(0xFFFF8C42), // Light Orange
+  ];
+
+  static const List<Color> greenGradient = [
+    Color(0xFF10B981), // Emerald Green
+    Color(0xFF34D399), // Light Emerald
+  ];
+
+  // ========================================
 
   static const List<Color> darkGradient = [
     Color(0xFF1E293B), // Dark Slate
@@ -94,6 +136,8 @@ class AppColors {
   // Glass Effect Colors
   static const Color glassSurface = Color(0x80FFFFFF); // 50% White
   static const Color glassBorder = Color(0x40FFFFFF); // 25% White
+  static const Color glassSurfaceDark =
+      Color(0x80334155); // 50% Slate in Dark Mode (NEW)
 
   // Shimmer Colors (for loading states)
   static const Color shimmerBase = Color(0xFFE2E8F0);
