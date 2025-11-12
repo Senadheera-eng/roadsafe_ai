@@ -28,7 +28,7 @@ class MjpegViewer extends StatefulWidget {
 }
 
 class _MjpegViewerState extends State<MjpegViewer> {
-  StreamSubscription<Uint8List>? _subscription;
+  StreamSubscription<List<int>>? _subscription;
   Uint8List? _currentFrame;
   bool _isLoading = true;
   String? _error;
@@ -38,12 +38,23 @@ class _MjpegViewerState extends State<MjpegViewer> {
   List<DetectionBox> _detectionBoxes = [];
   Size? _imageSize;
 
-  // NEW: For 1-second drowsiness detection
-  DateTime? _drowsinessStartTime;
+  // Enhanced drowsiness detection variables
+  DateTime? _eyesClosedStartTime;
   bool _hasTriggeredAlert = false;
-  static const Duration _drowsinessThreshold =
-      Duration(seconds: 1); // Changed to 1 second
+  static const Duration _eyesClosedThreshold =
+      Duration(milliseconds: 1500); // 1.5 seconds
   double _currentEyeOpenPercentage = 100.0;
+  bool _isEyesClosed = false;
+
+  // FPS tracking
+  int _frameCount = 0;
+  DateTime _lastFpsUpdate = DateTime.now();
+  double _currentFps = 0.0;
+
+  // Frame skipping for better performance
+  int _frameSkipCounter = 0;
+  static const int _frameSkipRate =
+      1; // Process every Nth frame (1 = no skip, 2 = skip every other)
 
   @override
   void initState() {
@@ -80,8 +91,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _startDrowsinessDetection() {
-    // Analyze every 2 seconds for faster response
-    _detectionTimer = Timer.periodic(Duration(seconds: 2), (timer) {
+    // Optimized: Analyze every 1.5 seconds to reduce CPU load and improve FPS
+    // This allows the video stream to run at full speed while still detecting drowsiness
+    _detectionTimer = Timer.periodic(Duration(milliseconds: 1500), (timer) {
       if (_currentFrame != null && !_isAnalyzing) {
         _analyzeCurrentFrame();
       }
@@ -91,23 +103,21 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopDrowsinessDetection() {
     _detectionTimer?.cancel();
     _detectionTimer = null;
-    _drowsinessStartTime = null;
+    _eyesClosedStartTime = null;
     _hasTriggeredAlert = false;
+    _isEyesClosed = false;
     setState(() {
       _detectionBoxes.clear();
+      _currentEyeOpenPercentage = 100.0;
     });
   }
 
   Future<void> _analyzeCurrentFrame() async {
     if (_currentFrame == null || _isAnalyzing) return;
 
-    setState(() {
-      _isAnalyzing = true;
-    });
+    _isAnalyzing = true;
 
     try {
-      print('=== FRAME ANALYSIS START ===');
-
       final result = await DrowsinessDetector.analyzeImage(_currentFrame!);
 
       if (result != null && mounted) {
@@ -116,120 +126,125 @@ class _MjpegViewerState extends State<MjpegViewer> {
           _currentEyeOpenPercentage = result.eyeOpenPercentage;
         });
 
-        print('Predictions: ${result.totalPredictions}');
-        print('Eye Open: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
-        print('Is Drowsy: ${result.isDrowsy}');
+        // Check if eyes are closed (percentage < 20% or explicit closed detection)
+        bool eyesClosed = result.eyeOpenPercentage < 20 ||
+            result.detectionBoxes.any((box) =>
+                box.className.toLowerCase().contains('clos') &&
+                box.confidence > 0.3);
 
-        // Log each detection box
-        for (var box in result.detectionBoxes) {
-          print(
-              '  Box: ${box.className} ${(box.confidence * 100).toInt()}% isDrowsy=${box.isDrowsy}');
-        }
-
-        // SIMPLIFIED LOGIC: Just check if result.isDrowsy is true
-        if (result.isDrowsy) {
-          if (_drowsinessStartTime == null) {
-            _drowsinessStartTime = DateTime.now();
+        if (eyesClosed) {
+          // Eyes are closed
+          if (_eyesClosedStartTime == null) {
+            // Start tracking closed eyes
+            _eyesClosedStartTime = DateTime.now();
             _hasTriggeredAlert = false;
-            print('DROWSINESS TIMER STARTED');
+            print('👁️ Eyes closed detected - Starting timer');
           } else {
-            final duration = DateTime.now().difference(_drowsinessStartTime!);
-            final milliseconds = duration.inMilliseconds;
+            // Check if eyes have been closed for 1.5 seconds
+            final closedDuration =
+                DateTime.now().difference(_eyesClosedStartTime!);
 
-            print('Timer: ${milliseconds}ms / 1000ms');
-
-            if (milliseconds >= 1000 && !_hasTriggeredAlert) {
-              print('');
-              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-              print('VIBRATION TRIGGER CONDITIONS MET!');
-              print('Duration: ${milliseconds}ms');
-              print('Has triggered: $_hasTriggeredAlert');
-              print('!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!');
-              print('');
-
+            if (closedDuration >= _eyesClosedThreshold && !_hasTriggeredAlert) {
+              print(
+                  '⚠️ ALERT: Eyes closed for ${closedDuration.inMilliseconds}ms');
               _hasTriggeredAlert = true;
 
-              // DIRECT VIBRATION CALL
-              print('Calling triggerDrowsinessAlert()...');
-              try {
-                await DrowsinessDetector.triggerDrowsinessAlert();
-                print('triggerDrowsinessAlert() completed');
-              } catch (e) {
-                print('ERROR calling triggerDrowsinessAlert: $e');
-              }
+              // Trigger vibration alert
+              await DrowsinessDetector.triggerDrowsinessAlert();
 
-              // UI Callback
+              // Notify parent
               if (widget.onDrowsinessDetected != null) {
-                try {
-                  widget.onDrowsinessDetected!(result);
-                  print('UI callback completed');
-                } catch (e) {
-                  print('ERROR in UI callback: $e');
-                }
+                widget.onDrowsinessDetected!(result);
               }
             }
           }
+
+          setState(() {
+            _isEyesClosed = true;
+          });
         } else {
-          // Eyes open - reset
-          if (_drowsinessStartTime != null) {
-            print('Eyes opened - timer reset');
+          // Eyes are open - reset timer
+          if (_eyesClosedStartTime != null) {
+            print('👁️ Eyes opened - Resetting timer');
           }
-          _drowsinessStartTime = null;
+          _eyesClosedStartTime = null;
           _hasTriggeredAlert = false;
+
+          setState(() {
+            _isEyesClosed = false;
+          });
+        }
+
+        // Additional check: Low eye open percentage (backup trigger)
+        if (result.eyeOpenPercentage < 20 && !_hasTriggeredAlert) {
+          print(
+              '⚠️ ALERT: Low eye percentage detected: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
+          _hasTriggeredAlert = true;
+
+          // Trigger vibration
+          await DrowsinessDetector.triggerDrowsinessAlert();
+
+          if (widget.onDrowsinessDetected != null) {
+            widget.onDrowsinessDetected!(result);
+          }
         }
       }
-    } catch (e, stackTrace) {
-      print('ANALYSIS ERROR: $e');
-      print('Stack: $stackTrace');
+    } catch (e) {
+      print('Error analyzing frame: $e');
     } finally {
-      if (mounted) {
-        setState(() {
-          _isAnalyzing = false;
-        });
-      }
+      _isAnalyzing = false;
     }
   }
 
   void _startStream() {
-    if (widget.stream.isEmpty) return;
+    _isLoading = true;
+    _error = null;
 
-    setState(() {
-      _isLoading = true;
-      _error = null;
-    });
-
-    _subscription = _mjpegStream(widget.stream).listen(
-      (frame) {
-        if (mounted) {
-          setState(() {
-            _currentFrame = frame;
-            _isLoading = false;
-            _error = null;
-          });
-          _getImageSize(frame);
-        }
-      },
-      onError: (error) {
-        if (mounted) {
-          setState(() {
-            _error = error.toString();
-            _isLoading = false;
-          });
-        }
-      },
-    );
-  }
-
-  Future<void> _getImageSize(Uint8List imageBytes) async {
     try {
-      final codec = await ui.instantiateImageCodec(imageBytes);
-      final frame = await codec.getNextFrame();
-      setState(() {
-        _imageSize =
-            Size(frame.image.width.toDouble(), frame.image.height.toDouble());
+      final uri = Uri.parse(widget.stream);
+      http.Client client = http.Client();
+
+      final request = http.Request('GET', uri);
+      // Optimized headers for better performance
+      request.headers['Connection'] = 'keep-alive';
+      request.headers['Cache-Control'] = 'no-cache';
+
+      client.send(request).then((response) {
+        if (response.statusCode == 200) {
+          print('✅ Stream connected: ${widget.stream}');
+
+          _subscription = response.stream.listen(
+            (chunk) {
+              _processChunk(chunk);
+            },
+            onError: (error) {
+              setState(() {
+                _error = error.toString();
+                _isLoading = false;
+              });
+            },
+            onDone: () {
+              print('Stream ended');
+            },
+            cancelOnError: true,
+          );
+        } else {
+          setState(() {
+            _error = 'HTTP ${response.statusCode}';
+            _isLoading = false;
+          });
+        }
+      }).catchError((error) {
+        setState(() {
+          _error = error.toString();
+          _isLoading = false;
+        });
       });
     } catch (e) {
-      print('Error getting image size: $e');
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
     }
   }
 
@@ -238,334 +253,413 @@ class _MjpegViewerState extends State<MjpegViewer> {
     _subscription = null;
   }
 
-  Stream<Uint8List> _mjpegStream(String url) async* {
-    try {
-      final client = http.Client();
-      final request = http.Request('GET', Uri.parse(url));
+  final List<int> _buffer = [];
+  static const _jpegStart = [0xFF, 0xD8];
+  static const _jpegEnd = [0xFF, 0xD9];
 
-      final response = await client.send(request);
+  void _processChunk(List<int> chunk) {
+    _buffer.addAll(chunk);
 
-      if (response.statusCode != 200) {
-        throw Exception(
-            'HTTP ${response.statusCode}: Failed to connect to stream');
-      }
-
-      const boundary = '123456789000000000000987654321';
-      List<int> buffer = [];
-      bool inImage = false;
-
-      await for (List<int> chunk in response.stream) {
-        buffer.addAll(chunk);
-
-        if (!inImage) {
-          String bufferStr = String.fromCharCodes(buffer);
-          int startIndex = bufferStr.indexOf('\r\n\r\n');
-
-          if (startIndex != -1) {
-            inImage = true;
-            buffer = buffer.sublist(startIndex + 4);
-          }
-        }
-
-        if (inImage) {
-          String bufferStr = String.fromCharCodes(buffer);
-          int endIndex = bufferStr.indexOf(boundary);
-
-          if (endIndex != -1) {
-            List<int> imageData = buffer.sublist(0, endIndex);
-
-            if (imageData.isNotEmpty) {
-              yield Uint8List.fromList(imageData);
-            }
-
-            buffer = buffer.sublist(endIndex + boundary.length);
-            inImage = false;
-          }
-        }
-
-        if (buffer.length > 1024 * 1024) {
-          buffer.clear();
-          inImage = false;
+    while (true) {
+      // Find JPEG start
+      int startIndex = -1;
+      for (int i = 0; i < _buffer.length - 1; i++) {
+        if (_buffer[i] == _jpegStart[0] && _buffer[i + 1] == _jpegStart[1]) {
+          startIndex = i;
+          break;
         }
       }
-    } catch (e) {
-      yield* Stream.error(e);
+
+      if (startIndex == -1) {
+        _buffer.clear();
+        break;
+      }
+
+      // Find JPEG end
+      int endIndex = -1;
+      for (int i = startIndex + 2; i < _buffer.length - 1; i++) {
+        if (_buffer[i] == _jpegEnd[0] && _buffer[i + 1] == _jpegEnd[1]) {
+          endIndex = i + 2;
+          break;
+        }
+      }
+
+      if (endIndex == -1) {
+        // Remove data before start marker
+        if (startIndex > 0) {
+          _buffer.removeRange(0, startIndex);
+        }
+        break;
+      }
+
+      // Extract frame
+      final frame = Uint8List.fromList(_buffer.sublist(startIndex, endIndex));
+      _buffer.removeRange(0, endIndex);
+
+      // Update FPS
+      _updateFps();
+
+      // Frame skipping for better performance
+      _frameSkipCounter++;
+      if (_frameSkipCounter >= _frameSkipRate) {
+        _frameSkipCounter = 0;
+
+        // Update current frame
+        if (mounted) {
+          setState(() {
+            _currentFrame = frame;
+            _isLoading = false;
+          });
+        }
+      }
+    }
+  }
+
+  void _updateFps() {
+    _frameCount++;
+    final now = DateTime.now();
+    final diff = now.difference(_lastFpsUpdate);
+
+    if (diff.inMilliseconds >= 1000) {
+      _currentFps = _frameCount / (diff.inMilliseconds / 1000.0);
+      _frameCount = 0;
+      _lastFpsUpdate = now;
+
+      if (mounted) {
+        setState(() {});
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_error != null) {
-      return widget.error?.call(context, _error!, null) ??
-          Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(Icons.error_outline, size: 48, color: Colors.red[300]),
-                const SizedBox(height: 16),
-                Text('Stream Error',
-                    style: TextStyle(color: Colors.white, fontSize: 16)),
-                const SizedBox(height: 8),
-                Text(_error!,
-                    style: TextStyle(color: Colors.white70, fontSize: 12)),
-              ],
-            ),
-          );
-    }
-
-    if (_isLoading) {
-      return widget.loading ??
-          const Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                CircularProgressIndicator(color: Colors.white),
-                SizedBox(height: 16),
-                Text('Connecting to camera...',
-                    style: TextStyle(color: Colors.white)),
-              ],
-            ),
-          );
-    }
-
-    if (_currentFrame == null) {
-      return const Center(
-        child: Text('No video data', style: TextStyle(color: Colors.white)),
+      return Center(
+        child: widget.error?.call(context, _error!, null) ??
+            Text('Error: $_error'),
       );
     }
 
-    return Stack(
-      children: [
-        // Video feed
-        LayoutBuilder(
-          builder: (context, constraints) {
-            return Stack(
-              children: [
-                Image.memory(
-                  _currentFrame!,
-                  fit: BoxFit.cover,
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  gaplessPlayback: true,
-                ),
+    if (_isLoading || _currentFrame == null) {
+      return Center(
+        child: widget.loading ?? const CircularProgressIndicator(),
+      );
+    }
 
-                // Detection overlay
-                if (widget.enableDrowsinessDetection &&
-                    _detectionBoxes.isNotEmpty)
-                  ...buildDetectionOverlay(constraints),
-              ],
-            );
-          },
-        ),
-
-        // AI Status indicator with Eye Opening Percentage
-        if (widget.enableDrowsinessDetection)
-          Positioned(
-            top: 10,
-            left: 10,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _isAnalyzing ? Colors.orange : Colors.green,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _isAnalyzing ? Icons.psychology : Icons.visibility,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        _isAnalyzing ? 'Analyzing...' : 'AI Active',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 8),
-                // Eye Opening Percentage Display
-                Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                    color: _currentEyeOpenPercentage > 50
-                        ? Colors.green
-                        : _currentEyeOpenPercentage > 20
-                            ? Colors.orange
-                            : Colors.red,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        _currentEyeOpenPercentage > 50
-                            ? Icons.visibility
-                            : Icons.visibility_off,
-                        color: Colors.white,
-                        size: 16,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        'Eyes: ${_currentEyeOpenPercentage.toStringAsFixed(0)}%',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-        // Timer indicator (shows when drowsiness is being tracked)
-        if (widget.enableDrowsinessDetection &&
-            _drowsinessStartTime != null &&
-            !_hasTriggeredAlert)
-          Positioned(
-            top: 10,
-            right: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-              decoration: BoxDecoration(
-                color: Colors.red,
-                borderRadius: BorderRadius.circular(12),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.red.withOpacity(0.5),
-                    blurRadius: 10,
-                    spreadRadius: 2,
-                  ),
-                ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return Stack(
+          children: [
+            // Video feed
+            Center(
+              child: Image.memory(
+                _currentFrame!,
+                gaplessPlayback: true,
+                fit: BoxFit.contain,
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.warning_amber_rounded,
-                    color: Colors.white,
-                    size: 16,
+            ),
+
+            // Detection overlay
+            if (widget.enableDrowsinessDetection && _detectionBoxes.isNotEmpty)
+              Positioned.fill(
+                child: CustomPaint(
+                  painter: DetectionOverlayPainter(
+                    detectionBoxes: _detectionBoxes,
+                    imageSize: _imageSize,
+                    isEyesClosed: _isEyesClosed,
                   ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '${(DateTime.now().difference(_drowsinessStartTime!).inMilliseconds / 1000).toStringAsFixed(1)}s',
-                    style: TextStyle(
+                ),
+              ),
+
+            // Eye open percentage display (top-left)
+            if (widget.enableDrowsinessDetection)
+              Positioned(
+                top: 16,
+                left: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _getPercentageColor(_currentEyeOpenPercentage)
+                        .withOpacity(0.9),
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.3),
+                        blurRadius: 8,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        _isEyesClosed
+                            ? Icons.visibility_off_rounded
+                            : Icons.visibility_rounded,
+                        color: Colors.white,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        '${_currentEyeOpenPercentage.toStringAsFixed(0)}%',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Open',
+                        style: TextStyle(
+                          color: Colors.white.withOpacity(0.9),
+                          fontSize: 14,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+
+            // FPS Counter (top-right)
+            if (widget.enableDrowsinessDetection)
+              Positioned(
+                top: 16,
+                right: 16,
+                child: Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 6,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withOpacity(0.6),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '${_currentFps.toStringAsFixed(1)} FPS',
+                    style: const TextStyle(
                       color: Colors.white,
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-
-        // Detection count
-        if (widget.enableDrowsinessDetection &&
-            _detectionBoxes.isNotEmpty &&
-            _drowsinessStartTime == null)
-          Positioned(
-            top: 10,
-            right: 10,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(
-                color: Colors.black54,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                'Detections: ${_detectionBoxes.length}',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 12,
-                  fontWeight: FontWeight.bold,
                 ),
               ),
-            ),
-          ),
-      ],
+
+            // Warning indicator when eyes closed
+            if (widget.enableDrowsinessDetection && _isEyesClosed)
+              Positioned(
+                bottom: 16,
+                left: 0,
+                right: 0,
+                child: Center(
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 20,
+                      vertical: 12,
+                    ),
+                    decoration: BoxDecoration(
+                      color: Colors.red.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(24),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.red.withOpacity(0.4),
+                          blurRadius: 12,
+                          spreadRadius: 2,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        const Icon(
+                          Icons.warning_rounded,
+                          color: Colors.white,
+                          size: 24,
+                        ),
+                        const SizedBox(width: 12),
+                        Text(
+                          _hasTriggeredAlert
+                              ? 'DROWSINESS ALERT!'
+                              : 'Eyes Closed',
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        );
+      },
     );
   }
 
-  List<Widget> buildDetectionOverlay(BoxConstraints constraints) {
-    if (_imageSize == null) return [];
+  Color _getPercentageColor(double percentage) {
+    if (percentage >= 80) return Colors.green;
+    if (percentage >= 50) return Colors.orange;
+    if (percentage >= 20) return Colors.deepOrange;
+    return Colors.red;
+  }
+}
 
-    final scaleX = constraints.maxWidth / _imageSize!.width;
-    final scaleY = constraints.maxHeight / _imageSize!.height;
+// Enhanced painter with green/red boxes
+class DetectionOverlayPainter extends CustomPainter {
+  final List<DetectionBox> detectionBoxes;
+  final Size? imageSize;
+  final bool isEyesClosed;
 
-    return _detectionBoxes.map((detection) {
-      final left = detection.x * scaleX;
-      final top = detection.y * scaleY;
-      final width = detection.width * scaleX;
-      final height = detection.height * scaleY;
+  DetectionOverlayPainter({
+    required this.detectionBoxes,
+    required this.imageSize,
+    required this.isEyesClosed,
+  });
 
-      // Ensure bounds are within screen
-      final adjustedLeft = left < 0
-          ? 0.0
-          : (left + width > constraints.maxWidth
-              ? constraints.maxWidth - width
-              : left);
-      final adjustedTop = top < 0 ? 0.0 : top;
-      final adjustedWidth =
-          width > constraints.maxWidth ? constraints.maxWidth - 10 : width;
+  @override
+  void paint(Canvas canvas, Size size) {
+    if (detectionBoxes.isEmpty) return;
 
-      // Create label text
-      final confidenceText = '${(detection.confidence * 100).toInt()}%';
-      final labelText = '${detection.className} $confidenceText';
+    for (var box in detectionBoxes) {
+      // Determine if this is an eye detection
+      bool isEye = box.className.toLowerCase().contains('ope') ||
+          box.className.toLowerCase().contains('clos') ||
+          box.className.toLowerCase().contains('eye');
 
-      return Positioned(
-        left: adjustedLeft,
-        top: adjustedTop,
-        child: Container(
-          width: adjustedWidth < 50 ? 50 : adjustedWidth,
-          height: height < 30 ? 30 : height,
-          constraints: BoxConstraints(
-            maxWidth: constraints.maxWidth - 20,
-            minWidth: 40,
-          ),
-          decoration: BoxDecoration(
-            border: Border.all(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
-              width: 2,
+      // Determine box color based on detection
+      Color boxColor;
+      double strokeWidth;
+
+      if (isEye) {
+        // For eyes: Green if open, Red if closed
+        bool isClosed =
+            box.className.toLowerCase().contains('clos') || box.isDrowsy;
+        boxColor = isClosed ? Colors.red : Colors.green;
+        strokeWidth = 3.0;
+      } else {
+        // For other detections (yawn, etc.)
+        boxColor = box.isDrowsy ? Colors.red : Colors.blue;
+        strokeWidth = 2.5;
+      }
+
+      // Create paint for box outline
+      final paint = Paint()
+        ..color = boxColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = strokeWidth;
+
+      // Create paint for background
+      final bgPaint = Paint()
+        ..color = boxColor.withOpacity(0.2)
+        ..style = PaintingStyle.fill;
+
+      // Scale coordinates to canvas size
+      final rect = Rect.fromLTWH(
+        box.x * size.width,
+        box.y * size.height,
+        box.width * size.width,
+        box.height * size.height,
+      );
+
+      // Draw semi-transparent background
+      canvas.drawRect(rect, bgPaint);
+
+      // Draw box outline
+      canvas.drawRect(rect, paint);
+
+      // Draw confidence label with background
+      final confidenceText = '${(box.confidence * 100).toInt()}%';
+      final textSpan = TextSpan(
+        text: confidenceText,
+        style: TextStyle(
+          color: Colors.white,
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          shadows: [
+            Shadow(
+              color: Colors.black.withOpacity(0.8),
+              offset: const Offset(1, 1),
+              blurRadius: 3,
             ),
-            borderRadius: BorderRadius.circular(4),
-          ),
-          child: Container(
-            padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-            decoration: BoxDecoration(
-              color: detection.isDrowsy ? Colors.red : Colors.green,
-              borderRadius: BorderRadius.only(
-                topLeft: Radius.circular(2),
-                topRight: Radius.circular(2),
-              ),
-            ),
-            child: Text(
-              labelText,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: 10,
-                fontWeight: FontWeight.bold,
-              ),
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-            ),
-          ),
+          ],
         ),
       );
-    }).toList();
+
+      final textPainter = TextPainter(
+        text: textSpan,
+        textDirection: TextDirection.ltr,
+      );
+
+      textPainter.layout();
+
+      // Draw label background
+      final labelRect = Rect.fromLTWH(
+        rect.left,
+        rect.top - 24,
+        textPainter.width + 12,
+        20,
+      );
+
+      final labelBgPaint = Paint()
+        ..color = boxColor
+        ..style = PaintingStyle.fill;
+
+      canvas.drawRRect(
+        RRect.fromRectAndRadius(labelRect, const Radius.circular(4)),
+        labelBgPaint,
+      );
+
+      // Draw text
+      textPainter.paint(
+        canvas,
+        Offset(rect.left + 6, rect.top - 22),
+      );
+    }
+
+    // Draw corner indicators for eyes
+    for (var box in detectionBoxes) {
+      bool isEye = box.className.toLowerCase().contains('ope') ||
+          box.className.toLowerCase().contains('clos') ||
+          box.className.toLowerCase().contains('eye');
+
+      if (isEye) {
+        bool isClosed =
+            box.className.toLowerCase().contains('clos') || box.isDrowsy;
+        Color cornerColor = isClosed ? Colors.red : Colors.green;
+
+        final cornerPaint = Paint()
+          ..color = cornerColor
+          ..style = PaintingStyle.fill;
+
+        final rect = Rect.fromLTWH(
+          box.x * size.width,
+          box.y * size.height,
+          box.width * size.width,
+          box.height * size.height,
+        );
+
+        // Draw corner circles
+        final cornerRadius = 4.0;
+        canvas.drawCircle(rect.topLeft, cornerRadius, cornerPaint);
+        canvas.drawCircle(rect.topRight, cornerRadius, cornerPaint);
+        canvas.drawCircle(rect.bottomLeft, cornerRadius, cornerPaint);
+        canvas.drawCircle(rect.bottomRight, cornerRadius, cornerPaint);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(DetectionOverlayPainter oldDelegate) {
+    return detectionBoxes != oldDelegate.detectionBoxes ||
+        isEyesClosed != oldDelegate.isEyesClosed;
   }
 }
