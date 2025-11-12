@@ -271,30 +271,51 @@ class DataService {
 
   // End the current session
   Future<void> endSession({String? endLocation, double? distanceKm}) async {
-    if (!hasActiveSession) throw Exception('No active session');
+    if (!hasActiveSession) {
+      print('⚠️ No active session to end');
+      throw Exception('No active session');
+    }
 
-    final endTime = DateTime.now();
-    final duration = endTime.difference(_activeSession!.startTime);
-    final safetyScore = _activeSession!.calculateSafetyScore();
+    try {
+      print('🛑 Starting to end session...');
+      print('   Session ID: ${_activeSession!.id}');
+      print('   Is Active: ${_activeSession!.isActive}');
 
-    final completedSession = _activeSession!.copyWith(
-      endTime: endTime,
-      duration: duration,
-      safetyScore: safetyScore,
-      isActive: false,
-      endLocation: endLocation,
-      distanceKm: distanceKm,
-    );
+      final endTime = DateTime.now();
+      final duration = endTime.difference(_activeSession!.startTime);
+      final safetyScore = _activeSession!.calculateSafetyScore();
 
-    // Save to Firestore
-    await addSession(completedSession);
+      final completedSession = _activeSession!.copyWith(
+        endTime: endTime,
+        duration: duration,
+        safetyScore: safetyScore,
+        isActive: false,
+        endLocation: endLocation,
+        distanceKm: distanceKm,
+      );
 
-    // Clear active session
-    _activeSession = null;
-    _sessionTimer?.cancel();
-    _activeSessionController.add(null);
+      print('📊 Calculated Score: ${completedSession.safetyScore}');
 
-    print('🏁 Session ended: ${completedSession.id}');
+      // IMPORTANT: Stop timer and clear session IMMEDIATELY before saving
+      _sessionTimer?.cancel();
+      _sessionTimer = null;
+      _activeSession = null;
+
+      // Broadcast null immediately to update UI
+      _activeSessionController.add(null);
+      print('📡 Broadcasted null session to stream');
+
+      // Then save to Firestore
+      await addSession(completedSession);
+      print('💾 Session saved to Firestore');
+
+      print('🏁 Session ended successfully: ${completedSession.id}');
+      print('⏱️ Final Duration: ${completedSession.duration}');
+    } catch (e) {
+      print('❌ Error ending session: $e');
+      print('Stack: ${StackTrace.current}');
+      rethrow;
+    }
   }
 
   // Add an alert to the active session
@@ -314,11 +335,13 @@ class DataService {
   // Timer to update session duration
   void _startSessionTimer() {
     _sessionTimer?.cancel();
-    _sessionTimer = Timer.periodic(const Duration(seconds: 30), (timer) {
+    _sessionTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
       if (_activeSession != null && _activeSession!.isActive) {
         final duration = DateTime.now().difference(_activeSession!.startTime);
         _activeSession = _activeSession!.copyWith(duration: duration);
         _activeSessionController.add(_activeSession);
+      } else {
+        timer.cancel();
       }
     });
   }

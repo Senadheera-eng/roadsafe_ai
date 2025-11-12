@@ -38,8 +38,19 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   void initState() {
     super.initState();
     _initializeAnimations();
-    _loadData();
+    _checkForActiveSession(); // Check if session is already running
     _listenToActiveSession();
+    _loadData();
+  }
+
+  // Check if there's already an active session when page loads
+  void _checkForActiveSession() {
+    if (_dataService.hasActiveSession) {
+      setState(() {
+        _activeSession = _dataService.activeSession;
+      });
+      print('📊 Found existing active session: ${_activeSession?.id}');
+    }
   }
 
   void _initializeAnimations() {
@@ -65,10 +76,16 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   void _listenToActiveSession() {
     _activeSessionSubscription =
         _dataService.activeSessionStream.listen((session) {
+      print('📡 Received session update from stream:');
+      print('   Session: ${session?.id ?? "NULL"}');
+      print('   Is Active: ${session?.isActive ?? "N/A"}');
+
       if (mounted) {
         setState(() {
           _activeSession = session;
         });
+
+        print('✅ UI state updated. Active session: ${_activeSession != null}');
       }
     });
   }
@@ -137,19 +154,100 @@ class _AnalyticsPageState extends State<AnalyticsPage>
 
   // End current trip
   Future<void> _endTrip() async {
+    if (_activeSession == null || !_dataService.hasActiveSession) {
+      _showSnackBar(
+        'No active trip to end',
+        AppColors.warning,
+        icon: Icons.warning_rounded,
+      );
+      return;
+    }
+
+    // Show confirmation dialog
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient:
+                    const LinearGradient(colors: AppColors.orangeGradient),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child:
+                  const Icon(Icons.flag_rounded, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            Text('End Trip?', style: AppTextStyles.titleLarge),
+          ],
+        ),
+        content: Text(
+          'Are you sure you want to end the current trip? Your statistics will be saved.',
+          style: AppTextStyles.bodyMedium.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: Text('Cancel',
+                style: AppTextStyles.bodyMedium
+                    .copyWith(color: AppColors.textSecondary)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              elevation: 0,
+            ),
+            onPressed: () => Navigator.of(context).pop(true),
+            child: Text('End Trip',
+                style: AppTextStyles.bodyMedium.copyWith(
+                    color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    // Store score before ending
+    final scoreBeforeEnd = _activeSession?.safetyScore ?? 0.0;
+
     try {
+      print('🛑 Ending trip...');
+      print('Current active session: ${_activeSession?.id}');
+
       await _dataService.endSession(
         endLocation: 'Destination', // TODO: Get actual location
       );
 
+      print('✅ Trip ended successfully');
+
+      // Force clear the active session in UI
+      setState(() {
+        _activeSession = null;
+      });
+
       _showSnackBar(
-        '🏁 Trip completed! Check your statistics.',
-        AppColors.info,
-        icon: Icons.flag_rounded,
+        '🏁 Trip completed! Safety score: ${scoreBeforeEnd.toStringAsFixed(1)}',
+        AppColors.success,
+        icon: Icons.check_circle_rounded,
       );
+
+      // Reload data to show updated history
+      await Future.delayed(const Duration(milliseconds: 500));
+      print('🔄 Refreshing data...');
     } catch (e) {
+      print('❌ Error ending trip: $e');
+      print('Stack trace: ${StackTrace.current}');
       _showSnackBar(
-        'Error: ${e.toString()}',
+        'Error ending trip: ${e.toString()}',
         AppColors.error,
         icon: Icons.error_rounded,
       );
@@ -195,7 +293,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       // Active Trip Section
-                      if (_activeSession != null)
+                      if (_activeSession != null && _activeSession!.isActive)
                         _buildActiveTripCard()
                       else
                         _buildStartTripCard(),
@@ -517,6 +615,86 @@ class _AnalyticsPageState extends State<AnalyticsPage>
               ),
             ],
           ),
+
+          // Alert History (if there are alerts)
+          if (_activeSession!.alerts.isNotEmpty) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.background,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.history_rounded,
+                          color: AppColors.textSecondary, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        'Alert History',
+                        style: AppTextStyles.labelLarge.copyWith(
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  ..._activeSession!.alerts
+                      .take(3)
+                      .map(
+                        (alert) => Padding(
+                          padding: const EdgeInsets.only(bottom: 4),
+                          child: Row(
+                            children: [
+                              Container(
+                                width: 4,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: _getAlertColor(alert.type),
+                                  shape: BoxShape.circle,
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(
+                                DateFormat('h:mm:ss a').format(alert.time),
+                                style: AppTextStyles.bodySmall.copyWith(
+                                  color: AppColors.textSecondary,
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  alert.type,
+                                  style: AppTextStyles.bodySmall.copyWith(
+                                    color: AppColors.textPrimary,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      )
+                      .toList(),
+                  if (_activeSession!.alerts.length > 3)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 4),
+                      child: Text(
+                        '+${_activeSession!.alerts.length - 3} more alerts',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textHint,
+                          fontStyle: FontStyle.italic,
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
 
           const SizedBox(height: 20),
 
@@ -944,24 +1122,82 @@ class _AnalyticsPageState extends State<AnalyticsPage>
           if (session.totalAlerts > 0) ...[
             const SizedBox(height: 12),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
                 color: AppColors.background,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.warning_amber_rounded,
-                      color: AppColors.warning, size: 16),
-                  const SizedBox(width: 6),
-                  Text(
-                    '${session.totalAlerts} ${session.totalAlerts == 1 ? 'alert' : 'alerts'}',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.textSecondary,
-                      fontWeight: FontWeight.w500,
-                    ),
+                  Row(
+                    children: [
+                      Icon(Icons.warning_amber_rounded,
+                          color: AppColors.warning, size: 16),
+                      const SizedBox(width: 6),
+                      Text(
+                        '${session.totalAlerts} ${session.totalAlerts == 1 ? 'alert' : 'alerts'} during trip',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
                   ),
+                  if (session.alerts.isNotEmpty) ...[
+                    const SizedBox(height: 8),
+                    ...session.alerts
+                        .take(2)
+                        .map(
+                          (alert) => Padding(
+                            padding: const EdgeInsets.only(top: 4),
+                            child: Row(
+                              children: [
+                                Icon(
+                                  _getAlertIcon(alert.type),
+                                  color: _getAlertColor(alert.type),
+                                  size: 14,
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  DateFormat('h:mm a').format(alert.time),
+                                  style: AppTextStyles.labelSmall.copyWith(
+                                    color: AppColors.textHint,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Text(
+                                  '•',
+                                  style: AppTextStyles.labelSmall.copyWith(
+                                    color: AppColors.textHint,
+                                  ),
+                                ),
+                                const SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    alert.type,
+                                    style: AppTextStyles.labelSmall.copyWith(
+                                      color: AppColors.textSecondary,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        )
+                        .toList(),
+                    if (session.alerts.length > 2)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          '+${session.alerts.length - 2} more',
+                          style: AppTextStyles.labelSmall.copyWith(
+                            color: AppColors.textHint,
+                            fontStyle: FontStyle.italic,
+                          ),
+                        ),
+                      ),
+                  ],
                 ],
               ),
             ),
@@ -983,5 +1219,29 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     if (score >= 75) return Icons.thumb_up_rounded;
     if (score >= 60) return Icons.warning_rounded;
     return Icons.error_rounded;
+  }
+
+  Color _getAlertColor(String alertType) {
+    final type = alertType.toLowerCase();
+    if (type.contains('closed') || type.contains('eye')) {
+      return AppColors.error;
+    } else if (type.contains('yawn')) {
+      return AppColors.warning;
+    } else if (type.contains('nod')) {
+      return AppColors.info;
+    }
+    return AppColors.textSecondary;
+  }
+
+  IconData _getAlertIcon(String alertType) {
+    final type = alertType.toLowerCase();
+    if (type.contains('closed') || type.contains('eye')) {
+      return Icons.visibility_off_rounded;
+    } else if (type.contains('yawn')) {
+      return Icons.sentiment_dissatisfied_rounded;
+    } else if (type.contains('nod')) {
+      return Icons.swap_vert_rounded;
+    }
+    return Icons.warning_rounded;
   }
 }
