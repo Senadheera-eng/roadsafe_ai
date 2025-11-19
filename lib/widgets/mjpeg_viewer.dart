@@ -350,12 +350,12 @@ class _MjpegViewerState extends State<MjpegViewer> {
       builder: (context, constraints) {
         return Stack(
           children: [
-            // Video feed
-            Center(
+            // Video feed - Full screen without black bars
+            SizedBox.expand(
               child: Image.memory(
                 _currentFrame!,
                 gaplessPlayback: true,
-                fit: BoxFit.contain,
+                fit: BoxFit.cover,
               ),
             ),
 
