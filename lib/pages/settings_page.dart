@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart'; // NEW: For picking images
+import 'package:firebase_storage/firebase_storage.dart'; // NEW: For uploading to Firebase Storage
+import 'dart:io'; // NEW: For File operations
+
 import '../widgets/glass_card.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
@@ -13,13 +17,7 @@ class SettingsPage extends StatefulWidget {
 
 class _SettingsPageState extends State<SettingsPage>
     with SingleTickerProviderStateMixin {
-  // Toggle states
-  bool _alertsEnabled = true;
   bool _notificationsEnabled = false;
-  bool _soundEnabled = true;
-  bool _vibrationEnabled = true;
-  bool _autoStartDetection = false;
-  String _sensitivity = 'Medium';
 
   late AnimationController _animationController;
   late Animation<double> _fadeAnimation;
@@ -59,7 +57,104 @@ class _SettingsPageState extends State<SettingsPage>
     super.dispose();
   }
 
-  // Account Management Methods
+  // --- Account Management Methods ---
+
+  // UPDATED: This function now handles picking, uploading, and updating the profile picture
+  Future<void> _changeProfilePicture() async {
+    final user = FirebaseAuth.instance.currentUser;
+    if (user == null) {
+      _showErrorSnackBar('No user logged in.');
+      return;
+    }
+
+    final ImagePicker picker = ImagePicker();
+    XFile? image;
+
+    // Show a dialog to let the user choose between gallery or camera
+    await showModalBottomSheet(
+      context: context,
+      backgroundColor: AppColors.surface, // Adjust to your theme
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(25.0)),
+      ),
+      builder: (BuildContext context) {
+        return Column(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Text(
+                'Select Image Source',
+                style: AppTextStyles.titleLarge,
+              ),
+            ),
+            ListTile(
+              leading: const Icon(Icons.photo_library_rounded),
+              title: Text('Gallery', style: AppTextStyles.bodyMedium),
+              onTap: () async {
+                Navigator.pop(context); // Close the bottom sheet
+                image = await picker.pickImage(source: ImageSource.gallery);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.camera_alt_rounded),
+              title: Text('Camera', style: AppTextStyles.bodyMedium),
+              onTap: () async {
+                Navigator.pop(context); // Close the bottom sheet
+                image = await picker.pickImage(source: ImageSource.camera);
+              },
+            ),
+            const SizedBox(height: 16),
+          ],
+        );
+      },
+    );
+
+    if (image == null) {
+      _showInfoSnackBar('No image selected.');
+      return; // User cancelled image selection
+    }
+
+    _showInfoSnackBar('Uploading new photo...');
+
+    try {
+      // 1. Upload the image to Firebase Storage
+      final file = File(image!.path);
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('profile_pictures')
+          .child('${user.uid}.jpg'); // Use user's UID to name the file
+
+      final uploadTask = storageRef.putFile(file);
+      final snapshot = await uploadTask.whenComplete(() {});
+      final downloadUrl = await snapshot.ref.getDownloadURL();
+
+      // 2. Update the user's photoURL in Firebase Authentication
+      await user.updatePhotoURL(downloadUrl);
+
+      // 3. Force Firebase to reload the user data from the server
+      await user.reload();
+
+      // 4. Get the *reloaded* current user to ensure we have the latest data
+      await FirebaseAuth.instance.currentUser!
+          .reload(); // Ensure current user is refreshed
+
+      // 5. Force the UI to rebuild with the new data
+      if (mounted) {
+        setState(() {
+          // This empty setState triggers the build method to run again,
+          // fetching the new FirebaseAuth.instance.currentUser's photoURL
+        });
+      }
+
+      _showSuccessSnackBar('Profile photo updated successfully!');
+    } on FirebaseException catch (e) {
+      _showErrorSnackBar('Firebase error uploading photo: ${e.message}');
+    } catch (e) {
+      _showErrorSnackBar('Error updating photo: $e');
+    }
+  }
+
   Future<void> _changeUsername() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return;
@@ -141,6 +236,7 @@ class _SettingsPageState extends State<SettingsPage>
     if (result != null && result.isNotEmpty && result != user.displayName) {
       try {
         await user.updateDisplayName(result);
+        await user.reload(); // Good practice to reload here too
         setState(() {});
         _showSuccessSnackBar('Username updated successfully!');
       } catch (e) {
@@ -301,9 +397,13 @@ class _SettingsPageState extends State<SettingsPage>
 
       _showSuccessSnackBar('Password updated successfully!');
 
-      // Sign out after password change
       await Future.delayed(const Duration(seconds: 1));
+
       await FirebaseAuth.instance.signOut();
+
+      if (mounted) {
+        Navigator.of(context).popUntil((route) => route.isFirst);
+      }
     } on FirebaseAuthException catch (e) {
       String message;
       if (e.code == 'wrong-password' || e.code == 'invalid-credential') {
@@ -337,6 +437,24 @@ class _SettingsPageState extends State<SettingsPage>
     );
   }
 
+  void _showInfoSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.info_rounded, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: AppColors.info,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
+  }
+
   void _showErrorSnackBar(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
@@ -357,6 +475,9 @@ class _SettingsPageState extends State<SettingsPage>
 
   @override
   Widget build(BuildContext context) {
+    final user = FirebaseAuth.instance.currentUser;
+    final photoUrl = user?.photoURL;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: FadeTransition(
@@ -365,7 +486,6 @@ class _SettingsPageState extends State<SettingsPage>
           position: _slideAnimation,
           child: CustomScrollView(
             slivers: [
-              // Modern App Bar
               SliverAppBar(
                 expandedHeight: 180,
                 floating: false,
@@ -388,7 +508,6 @@ class _SettingsPageState extends State<SettingsPage>
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Gradient Background
                       Container(
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
@@ -398,8 +517,6 @@ class _SettingsPageState extends State<SettingsPage>
                           ),
                         ),
                       ),
-
-                      // Icon Background
                       Positioned(
                         right: -50,
                         top: -50,
@@ -409,8 +526,6 @@ class _SettingsPageState extends State<SettingsPage>
                           color: Colors.white.withOpacity(0.1),
                         ),
                       ),
-
-                      // Title
                       SafeArea(
                         child: Padding(
                           padding: const EdgeInsets.all(20),
@@ -439,7 +554,7 @@ class _SettingsPageState extends State<SettingsPage>
                                 ),
                               ),
                               Text(
-                                'Customize your experience',
+                                'Manage your account',
                                 style: AppTextStyles.bodyMedium.copyWith(
                                   color: Colors.white.withOpacity(0.9),
                                 ),
@@ -452,94 +567,18 @@ class _SettingsPageState extends State<SettingsPage>
                   ),
                 ),
               ),
-
-              // Content
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Detection Settings
-                      _buildSectionTitle(
-                        icon: Icons.radar_rounded,
-                        title: 'Detection Settings',
-                        gradient: AppColors.blueGradient,
-                      ),
-                      const SizedBox(height: 12),
-
-                      _buildToggleCard(
-                        icon: Icons.notifications_active_rounded,
-                        title: 'Drowsiness Alerts',
-                        subtitle: 'Real-time audio and vibration alerts',
-                        value: _alertsEnabled,
-                        gradient: AppColors.orangeGradient,
-                        onChanged: (val) {
-                          setState(() => _alertsEnabled = val);
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      _buildToggleCard(
-                        icon: Icons.play_arrow_rounded,
-                        title: 'Auto-Start Detection',
-                        subtitle: 'Start monitoring when device connects',
-                        value: _autoStartDetection,
-                        gradient: AppColors.greenGradient,
-                        onChanged: (val) {
-                          setState(() => _autoStartDetection = val);
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      _buildSensitivityCard(),
-
-                      const SizedBox(height: 24),
-
-                      // Alert Preferences
-                      _buildSectionTitle(
-                        icon: Icons.volume_up_rounded,
-                        title: 'Alert Preferences',
-                        gradient: AppColors.purpleGradient,
-                      ),
-                      const SizedBox(height: 12),
-
-                      _buildToggleCard(
-                        icon: Icons.volume_up_rounded,
-                        title: 'Sound Alerts',
-                        subtitle: 'Play alert sound when drowsiness detected',
-                        value: _soundEnabled,
-                        gradient: AppColors.purpleGradient,
-                        onChanged: (val) {
-                          setState(() => _soundEnabled = val);
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      _buildToggleCard(
-                        icon: Icons.vibration_rounded,
-                        title: 'Vibration',
-                        subtitle: 'Vibrate phone during alerts',
-                        value: _vibrationEnabled,
-                        gradient: AppColors.blueGradient,
-                        onChanged: (val) {
-                          setState(() => _vibrationEnabled = val);
-                        },
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Notifications
                       _buildSectionTitle(
                         icon: Icons.notifications_rounded,
                         title: 'Notifications',
                         gradient: AppColors.orangeGradient,
                       ),
                       const SizedBox(height: 12),
-
                       _buildToggleCard(
                         icon: Icons.notifications_outlined,
                         title: 'Push Notifications',
@@ -550,17 +589,13 @@ class _SettingsPageState extends State<SettingsPage>
                           setState(() => _notificationsEnabled = val);
                         },
                       ),
-
                       const SizedBox(height: 24),
-
-                      // Account Security
                       _buildSectionTitle(
                         icon: Icons.security_rounded,
                         title: 'Account Security',
                         gradient: AppColors.blueGradient,
                       ),
                       const SizedBox(height: 12),
-
                       _buildActionCard(
                         icon: Icons.person_outline_rounded,
                         title: 'Change Username',
@@ -568,9 +603,16 @@ class _SettingsPageState extends State<SettingsPage>
                         gradient: AppColors.blueGradient,
                         onTap: _changeUsername,
                       ),
-
                       const SizedBox(height: 12),
-
+                      _buildActionCard(
+                        icon: Icons.camera_alt_rounded,
+                        title: 'Change Profile Picture',
+                        subtitle: 'Update your avatar image',
+                        gradient: AppColors.purpleGradient,
+                        onTap: _changeProfilePicture,
+                        imageUrl: photoUrl,
+                      ),
+                      const SizedBox(height: 12),
                       _buildActionCard(
                         icon: Icons.lock_outline_rounded,
                         title: 'Change Password',
@@ -578,7 +620,6 @@ class _SettingsPageState extends State<SettingsPage>
                         gradient: AppColors.orangeGradient,
                         onTap: _changePassword,
                       ),
-
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -678,6 +719,7 @@ class _SettingsPageState extends State<SettingsPage>
     required String subtitle,
     required List<Color> gradient,
     required VoidCallback onTap,
+    String? imageUrl,
   }) {
     return GlassCard(
       padding: EdgeInsets.zero,
@@ -692,10 +734,26 @@ class _SettingsPageState extends State<SettingsPage>
                 width: 48,
                 height: 48,
                 decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: gradient),
+                  gradient: imageUrl == null
+                      ? LinearGradient(colors: gradient)
+                      : null, // Apply gradient only if no image
                   borderRadius: BorderRadius.circular(12),
+                  image: imageUrl != null
+                      ? DecorationImage(
+                          image: NetworkImage(imageUrl),
+                          fit: BoxFit.cover,
+                          // NEW: Add a key to NetworkImage to force a reload
+                          // This is crucial to avoid caching issues with the same URL (though Firebase Storage generates unique ones)
+                          // You can also add a `cache bust` query parameter if your server doesn't provide new URLs.
+                          // For Firebase Storage, the URL usually changes if the file is replaced, but this doesn't hurt.
+                          // If profile pictures don't show after upload, consider adding a unique `key: ValueKey(imageUrl)`
+                        )
+                      : null,
                 ),
-                child: Icon(icon, color: Colors.white, size: 24),
+                // Only show the icon if there is no image
+                child: imageUrl == null
+                    ? Icon(icon, color: Colors.white, size: 24)
+                    : null,
               ),
               const SizedBox(width: 16),
               Expanded(
@@ -722,107 +780,6 @@ class _SettingsPageState extends State<SettingsPage>
                 Icons.chevron_right_rounded,
                 color: AppColors.textSecondary,
                 size: 24,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildSensitivityCard() {
-    return GlassCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                      colors: AppColors.purpleGradient
-                          .map((c) => c.withOpacity(0.2))
-                          .toList()),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(
-                      color: AppColors.purpleGradient.first.withOpacity(0.3)),
-                ),
-                child: Icon(Icons.tune_rounded,
-                    color: AppColors.purpleGradient.first, size: 24),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'Detection Sensitivity',
-                      style: AppTextStyles.titleMedium.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      'Adjust how sensitive the detection should be',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Row(
-            children: [
-              _buildSensitivityOption('Low', Colors.green),
-              const SizedBox(width: 8),
-              _buildSensitivityOption('Medium', Colors.orange),
-              const SizedBox(width: 8),
-              _buildSensitivityOption('High', Colors.red),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSensitivityOption(String label, Color color) {
-    final isSelected = _sensitivity == label;
-    return Expanded(
-      child: InkWell(
-        onTap: () {
-          setState(() => _sensitivity = label);
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          decoration: BoxDecoration(
-            color: isSelected ? color.withOpacity(0.2) : AppColors.background,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(
-              color: isSelected ? color : AppColors.textHint.withOpacity(0.2),
-              width: isSelected ? 2 : 1,
-            ),
-          ),
-          child: Column(
-            children: [
-              Icon(
-                isSelected ? Icons.check_circle_rounded : Icons.circle_outlined,
-                color: isSelected ? color : AppColors.textSecondary,
-                size: 20,
-              ),
-              const SizedBox(height: 4),
-              Text(
-                label,
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: isSelected ? color : AppColors.textSecondary,
-                  fontWeight: isSelected ? FontWeight.w600 : FontWeight.normal,
-                ),
               ),
             ],
           ),
