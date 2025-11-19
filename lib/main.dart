@@ -76,10 +76,7 @@ class AuthWrapper extends StatelessWidget {
           return const HomePage();
         }
 
-        // Assuming LoginPage is defined elsewhere
-        // return const LoginPage();
-        // Fallback for demo environment if LoginPage is missing
-        return const HomePage();
+        return const LoginPage();
       },
     );
   }

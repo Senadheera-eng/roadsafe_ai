@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'dart:io';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/glass_card.dart';
-import 'dart:math';
 
 class ProfilePage extends StatefulWidget {
   const ProfilePage({super.key});
@@ -49,48 +51,76 @@ class _ProfilePageState extends State<ProfilePage>
     super.dispose();
   }
 
-  // Photo Management
-  String _generateSimulatedImageUrl() {
-    final seed = DateTime.now().millisecondsSinceEpoch;
-    final size = Random(seed).nextInt(50) + 100;
-    return 'https://placehold.co/${size}x${size}/0066FF/FFFFFF?text=PIC&s=$seed';
-  }
+  Future<void> _pickAndSetProfilePhoto(ImageSource source) async {
+    final picker = ImagePicker();
+    final XFile? image =
+        await picker.pickImage(source: source, imageQuality: 75);
 
-  void _pickAndSetProfilePhoto() async {
+    if (image == null) return;
+
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: const Text('Uploading new photo...'),
         backgroundColor: AppColors.info,
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        duration: const Duration(seconds: 2),
       ),
     );
 
-    final newUrl = _generateSimulatedImageUrl();
     try {
-      await FirebaseAuth.instance.currentUser?.updatePhotoURL(newUrl);
-      setState(() {
-        _profileImageUrl = FirebaseAuth.instance.currentUser?.photoURL;
-      });
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: const Text('✓ Profile photo updated!'),
-          backgroundColor: AppColors.success,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      // Standardized path: 'profile_pictures' (Matches Settings Page)
+      final storageRef = FirebaseStorage.instance
+          .ref()
+          .child('profile_pictures')
+          .child('${user.uid}.jpg');
+
+      File file = File(image.path);
+
+      // Upload with metadata to ensure correct content type
+      final metadata = SettableMetadata(contentType: 'image/jpeg');
+      final uploadTask = storageRef.putFile(file, metadata);
+
+      // Wait for the upload to actually complete
+      await uploadTask;
+
+      // Only try to get the URL if the upload didn't throw an error
+      final newUrl = await storageRef.getDownloadURL();
+
+      await user.updatePhotoURL(newUrl);
+      await user.reload();
+
+      if (mounted) {
+        setState(() {
+          _profileImageUrl = newUrl;
+        });
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: const Text('✓ Profile photo updated!'),
+            backgroundColor: AppColors.success,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('Error: ${e.toString()}'),
-          backgroundColor: AppColors.error,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        ),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Upload Failed: ${e.toString()}'),
+            backgroundColor: AppColors.error,
+            behavior: SnackBarBehavior.floating,
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          ),
+        );
+      }
     }
   }
 
@@ -99,28 +129,34 @@ class _ProfilePageState extends State<ProfilePage>
     if (confirmed) {
       try {
         await FirebaseAuth.instance.currentUser?.updatePhotoURL(null);
-        setState(() {
-          _profileImageUrl = null;
-        });
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: const Text('✓ Profile photo removed'),
-            backgroundColor: AppColors.success,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
+        await FirebaseAuth.instance.currentUser?.reload();
+
+        if (mounted) {
+          setState(() {
+            _profileImageUrl = null;
+          });
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: const Text('✓ Profile photo removed'),
+              backgroundColor: AppColors.success,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
       } catch (e) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Error: ${e.toString()}'),
-            backgroundColor: AppColors.error,
-            behavior: SnackBarBehavior.floating,
-            shape:
-                RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          ),
-        );
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Error: ${e.toString()}'),
+              backgroundColor: AppColors.error,
+              behavior: SnackBarBehavior.floating,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+            ),
+          );
+        }
       }
     }
   }
@@ -197,7 +233,6 @@ class _ProfilePageState extends State<ProfilePage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            // Handle bar
             Container(
               width: 48,
               height: 4,
@@ -207,8 +242,6 @@ class _ProfilePageState extends State<ProfilePage>
               ),
             ),
             const SizedBox(height: 24),
-
-            // Title
             Row(
               children: [
                 Container(
@@ -225,21 +258,27 @@ class _ProfilePageState extends State<ProfilePage>
               ],
             ),
             const SizedBox(height: 20),
-
-            // Options
             _buildOptionTile(
               icon: Icons.camera_alt_rounded,
-              title: _profileImageUrl == null
-                  ? 'Add Profile Photo'
-                  : 'Change Profile Photo',
-              subtitle: 'Upload a new photo',
+              title: 'Take Photo',
+              subtitle: 'Use your camera',
               gradient: AppColors.blueGradient,
               onTap: () {
                 Navigator.pop(context);
-                _pickAndSetProfilePhoto();
+                _pickAndSetProfilePhoto(ImageSource.camera);
               },
             ),
-
+            const SizedBox(height: 12),
+            _buildOptionTile(
+              icon: Icons.photo_library_rounded,
+              title: 'Choose from Gallery',
+              subtitle: 'Select an existing photo',
+              gradient: AppColors.purpleGradient,
+              onTap: () {
+                Navigator.pop(context);
+                _pickAndSetProfilePhoto(ImageSource.gallery);
+              },
+            ),
             if (_profileImageUrl != null) ...[
               const SizedBox(height: 12),
               _buildOptionTile(
@@ -328,7 +367,6 @@ class _ProfilePageState extends State<ProfilePage>
           position: _slideAnimation,
           child: CustomScrollView(
             slivers: [
-              // Modern App Bar with Gradient
               SliverAppBar(
                 expandedHeight: 280,
                 floating: false,
@@ -351,7 +389,6 @@ class _ProfilePageState extends State<ProfilePage>
                   background: Stack(
                     fit: StackFit.expand,
                     children: [
-                      // Gradient Background
                       Container(
                         decoration: const BoxDecoration(
                           gradient: LinearGradient(
@@ -361,22 +398,16 @@ class _ProfilePageState extends State<ProfilePage>
                           ),
                         ),
                       ),
-
-                      // Pattern Overlay
                       Positioned.fill(
                         child: CustomPaint(
                           painter: _GridPatternPainter(),
                         ),
                       ),
-
-                      // Profile Content
                       SafeArea(
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
                             const SizedBox(height: 60),
-
-                            // Avatar with Edit Button
                             Stack(
                               children: [
                                 Hero(
@@ -411,8 +442,6 @@ class _ProfilePageState extends State<ProfilePage>
                                     ),
                                   ),
                                 ),
-
-                                // Edit Button
                                 Positioned(
                                   right: 0,
                                   bottom: 0,
@@ -448,10 +477,7 @@ class _ProfilePageState extends State<ProfilePage>
                                 ),
                               ],
                             ),
-
                             const SizedBox(height: 16),
-
-                            // Name
                             Text(
                               userName,
                               style: AppTextStyles.headlineMedium.copyWith(
@@ -460,10 +486,7 @@ class _ProfilePageState extends State<ProfilePage>
                                 fontSize: 24,
                               ),
                             ),
-
                             const SizedBox(height: 8),
-
-                            // Badge
                             Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 16, vertical: 6),
@@ -498,15 +521,12 @@ class _ProfilePageState extends State<ProfilePage>
                   ),
                 ),
               ),
-
-              // Content
               SliverToBoxAdapter(
                 child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Stats Cards Row
                       Row(
                         children: [
                           Expanded(
@@ -537,22 +557,16 @@ class _ProfilePageState extends State<ProfilePage>
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 24),
-
-                      // Account Information Section
                       _buildSectionTitle('Account Information'),
                       const SizedBox(height: 12),
-
                       _buildInfoCard(
                         icon: Icons.email_rounded,
                         title: 'Email Address',
                         value: userEmail,
                         iconColor: AppColors.info,
                       ),
-
                       const SizedBox(height: 12),
-
                       _buildInfoCard(
                         icon: Icons.fingerprint_rounded,
                         title: 'User ID',
@@ -561,9 +575,7 @@ class _ProfilePageState extends State<ProfilePage>
                             : userId,
                         iconColor: AppColors.secondary,
                       ),
-
                       const SizedBox(height: 12),
-
                       _buildInfoCard(
                         icon: Icons.calendar_today_rounded,
                         title: 'Member Since',
@@ -572,13 +584,9 @@ class _ProfilePageState extends State<ProfilePage>
                             : 'N/A',
                         iconColor: AppColors.accent,
                       ),
-
                       const SizedBox(height: 24),
-
-                      // Device Status Section
                       _buildSectionTitle('Connected Devices'),
                       const SizedBox(height: 12),
-
                       _buildDeviceCard(
                         name: 'ESP32-CAM Module',
                         status: 'Online',
@@ -586,13 +594,9 @@ class _ProfilePageState extends State<ProfilePage>
                         signalStrength: 'Excellent',
                         isOnline: true,
                       ),
-
                       const SizedBox(height: 24),
-
-                      // Achievements Section
                       _buildSectionTitle('Achievements'),
                       const SizedBox(height: 12),
-
                       Row(
                         children: [
                           Expanded(
@@ -614,7 +618,6 @@ class _ProfilePageState extends State<ProfilePage>
                           ),
                         ],
                       ),
-
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -927,7 +930,6 @@ class _ProfilePageState extends State<ProfilePage>
   }
 }
 
-// Custom Painter for Grid Pattern
 class _GridPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
@@ -936,23 +938,11 @@ class _GridPatternPainter extends CustomPainter {
       ..strokeWidth = 1;
 
     const spacing = 30.0;
-
-    // Draw vertical lines
     for (double i = 0; i < size.width; i += spacing) {
-      canvas.drawLine(
-        Offset(i, 0),
-        Offset(i, size.height),
-        paint,
-      );
+      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
     }
-
-    // Draw horizontal lines
     for (double i = 0; i < size.height; i += spacing) {
-      canvas.drawLine(
-        Offset(0, i),
-        Offset(size.width, i),
-        paint,
-      );
+      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
     }
   }
 
