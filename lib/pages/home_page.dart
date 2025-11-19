@@ -955,7 +955,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Settings Navigation (Existing)
+            // Settings Navigation
             _buildMenuTile(
               icon: Icons.settings_rounded,
               title: 'Settings',
@@ -981,21 +981,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Logout Action
+            // Logout Action (UPDATED)
             _buildMenuTile(
               icon: Icons.logout_rounded,
               title: 'Logout',
               color: AppColors.error,
               onTap: () async {
-                // Show a confirmation dialog (instead of alert)
+                // Show a confirmation dialog
                 final confirmed = await _showLogoutConfirmation(context);
+
                 if (confirmed) {
-                  // Perform logout and navigate to Login page (assumed to be LoginPage)
+                  // 1. Perform logout
                   await FirebaseAuth.instance.signOut();
-                  // The AuthWrapper in main.dart will handle navigation to LoginPage
+
+                  // 2. FIX: Close the bottom sheet AND the Home Page
+                  // This forces the app to go back to the root (AuthWrapper -> LoginPage)
+                  if (context.mounted) {
+                    Navigator.of(context).popUntil((route) => route.isFirst);
+                  }
+                } else {
+                  // If cancelled, just close the menu
+                  Navigator.pop(context);
                 }
-                Navigator.pop(
-                    context); // Close the modal (if confirmation was shown or not)
               },
             ),
             const SizedBox(height: 16),

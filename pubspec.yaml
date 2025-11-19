@@ -1,30 +1,32 @@
 name: road_safe_ai
 description: A driver drowsiness detection app
 
-publish_to: 'none'
+publish_to: "none"
 
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
     sdk: flutter
-  
-  # Firebase
-  firebase_core: ^4.2.1
-  firebase_auth: ^6.1.2
-  
+
+  # Firebase - UPDATED TO LATEST COMPATIBLE VERSIONS
+  firebase_core: ^4.2.1 # Updated to match storage requirement
+  firebase_auth: ^6.1.2 # Updated to match core 4.x
+  cloud_firestore: ^6.1.0 # Updated to match core 4.x
+  firebase_storage: ^13.0.4 # The version you need
+
   # UI
   google_fonts: ^6.1.0
-  
-  # Icons
   cupertino_icons: ^1.0.2
+
+  # Utilities
   network_info_plus: ^7.0.0
   vibration: ^3.1.3
-  cloud_firestore: ^6.1.0
   intl: ^0.20.2
+  image_picker: ^1.0.7
 
 dev_dependencies:
   flutter_test:
