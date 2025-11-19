@@ -43,7 +43,7 @@ class CameraService {
   }
 
   // ============================================
-  // IMPROVED DETECTION - NO UI CHANGES
+  // IMPROVED DETECTION - UPDATED FOR NEW ESP32
   // ============================================
 
   Future<List<ESP32Device>> scanForDevices() async {
@@ -51,29 +51,19 @@ class CameraService {
 
     List<ESP32Device> foundDevices = [];
 
-    // STEP 1: Try your known IP first
-    print('📍 Step 1: Checking known IP: 10.251.96.17');
-    final knownDevice = await _checkESP32Device('10.251.96.17');
-    if (knownDevice != null) {
-      foundDevices.add(knownDevice);
-      print('✅ Found ESP32-CAM at 10.251.96.17');
-      _devicesController.add(foundDevices);
-      _startPeriodicScan(foundDevices);
-      return foundDevices;
-    }
-
-    // STEP 2: Try other common IPs
-    print('📍 Step 2: Checking other known IPs...');
+    // STEP 1: Try your known IPs first
+    print('🔍 Step 1: Checking known IPs...');
     final knownIPs = await scanKnownIPs();
     if (knownIPs.isNotEmpty) {
       foundDevices.addAll(knownIPs);
       _devicesController.add(foundDevices);
       _startPeriodicScan(foundDevices);
+      print('✅ Found ${knownIPs.length} device(s) in known IPs');
       return foundDevices;
     }
 
-    // STEP 3: Scan current network
-    print('📍 Step 3: Scanning current network...');
+    // STEP 2: Scan current network
+    print('🔍 Step 2: Scanning current network...');
     final currentNetwork = await _getLocalNetworkBase();
     if (currentNetwork != null) {
       print('🌐 Current network: $currentNetwork.x');
@@ -87,8 +77,8 @@ class CameraService {
       }
     }
 
-    // STEP 4: Scan common ranges
-    print('📍 Step 4: Scanning common ranges...');
+    // STEP 3: Scan common ranges
+    print('🔍 Step 3: Scanning common ranges...');
     final commonRanges = [
       '192.168.1',
       '192.168.0',
@@ -120,15 +110,17 @@ class CameraService {
 
   Future<List<ESP32Device>> scanKnownIPs() async {
     List<String> knownIPs = [
-      '10.251.96.17', // YOUR IP
+      '10.251.96.17', // YOUR KNOWN IP
       '10.19.80.42',
       '192.168.1.100',
       '192.168.1.101',
-      '192.168.4.1',
+      '192.168.4.1', // ESP32 AP mode default
       '192.168.0.100',
     ];
 
     List<ESP32Device> devices = [];
+
+    print('  Checking ${knownIPs.length} known IPs...');
 
     final results = await Future.wait(
       knownIPs.map((ip) => _checkESP32Device(ip)),
@@ -169,6 +161,8 @@ class CameraService {
     // Priority IPs to check first
     List<int> priorityIPs = [17, 42, 100, 101, 102, 1, 200, 254];
 
+    print('  Scanning priority IPs in $networkBase.x...');
+
     // Check priority IPs
     for (int ip in priorityIPs) {
       final device = await _checkESP32Device('$networkBase.$ip');
@@ -182,10 +176,13 @@ class CameraService {
     return devices;
   }
 
+  // ============================================
+  // UPDATED DETECTION METHOD - RECOGNIZES NEW HTML
+  // ============================================
   Future<ESP32Device?> _checkESP32Device(String ipAddress) async {
     try {
-      // Try multiple endpoints
-      final endpoints = ['/', '/status', '/capture'];
+      // Try multiple endpoints - Status endpoint first (fastest)
+      final endpoints = ['/status', '/', '/capture'];
 
       for (String endpoint in endpoints) {
         try {
@@ -200,18 +197,44 @@ class CameraService {
 
             bool isESP32 = false;
 
-            // Check 1: Server header
+            // Check 1: Status endpoint (JSON response) - BEST METHOD
+            if (endpoint == '/status') {
+              try {
+                if (body.contains('status') &&
+                    (body.contains('online') ||
+                        body.contains('alarm_active') ||
+                        body.contains('alerts'))) {
+                  isESP32 = true;
+                  print('  ✓ $ipAddress - Found via /status endpoint');
+                }
+              } catch (_) {}
+            }
+
+            // Check 2: Server header
             if (server.contains('esp32')) {
               isESP32 = true;
+              print('  ✓ $ipAddress - Found via server header');
             }
 
-            // Check 2: Body content
-            if (body.contains('esp32') ||
-                (body.contains('camera') && body.contains('stream'))) {
+            // Check 3: Body content - UPDATED FOR NEW HTML
+            if (body.contains('roadsafe') ||
+                body.contains('roadSafe') ||
+                body.contains('drowsiness') ||
+                body.contains('driver drowsiness') ||
+                body.contains('esp32-cam') ||
+                body.contains('esp32cam')) {
               isESP32 = true;
+              print('  ✓ $ipAddress - Found via RoadSafe/Drowsiness content');
             }
 
-            // Check 3: Stream endpoint
+            // Check 4: Camera-related content
+            if (body.contains('camera') &&
+                (body.contains('stream') || body.contains('live'))) {
+              isESP32 = true;
+              print('  ✓ $ipAddress - Found via camera/stream content');
+            }
+
+            // Check 5: Stream endpoint exists
             if (!isESP32 && endpoint == '/') {
               try {
                 final streamCheck = await http
@@ -222,14 +245,16 @@ class CameraService {
 
                 if (streamCheck.statusCode == 200) {
                   isESP32 = true;
+                  print('  ✓ $ipAddress - Found via /stream endpoint');
                 }
               } catch (_) {}
             }
 
             if (isESP32) {
+              print('✅ ESP32-CAM identified at $ipAddress');
               return ESP32Device(
                 ipAddress: ipAddress,
-                deviceName: 'ESP32-CAM ($ipAddress)',
+                deviceName: 'RoadSafe AI - ESP32-CAM',
                 isConnected: false,
               );
             }
@@ -244,29 +269,23 @@ class CameraService {
   }
 
   Future<List<ESP32Device>> scanKnownESP32() async {
-    print('Scanning known ESP32-CAM IP: 10.19.80.42');
+    print('Scanning known ESP32-CAM IPs...');
 
     List<ESP32Device> devices = [];
 
-    final device = await _checkESP32Device('10.19.80.42');
-    if (device != null) {
-      devices.add(device);
-    }
+    // Try multiple known IPs
+    List<String> knownIPs = [
+      '10.251.96.17',
+      '10.19.80.42',
+      '192.168.1.100',
+      '192.168.4.1',
+    ];
 
-    if (devices.isEmpty) {
-      List<String> similarIPs = [
-        '10.19.80.41',
-        '10.19.80.43',
-        '10.19.80.44',
-        '10.19.80.40',
-      ];
-
-      for (String ip in similarIPs) {
-        final testDevice = await _checkESP32Device(ip);
-        if (testDevice != null) {
-          devices.add(testDevice);
-          break;
-        }
+    for (String ip in knownIPs) {
+      final device = await _checkESP32Device(ip);
+      if (device != null) {
+        devices.add(device);
+        break; // Stop after finding first device
       }
     }
 
@@ -278,14 +297,30 @@ class CameraService {
     try {
       print('\n🔗 Connecting to ESP32-CAM at ${device.ipAddress}...');
 
-      final basicTest = await http
+      // Test multiple endpoints to ensure it's working
+      final statusTest = await http
           .get(
-            Uri.parse('http://${device.ipAddress}/'),
+            Uri.parse('http://${device.ipAddress}/status'),
           )
           .timeout(const Duration(seconds: 5));
 
-      if (basicTest.statusCode == 200) {
-        print('✅ Basic connectivity OK');
+      if (statusTest.statusCode == 200) {
+        print('✅ Status endpoint OK');
+
+        // Verify stream endpoint
+        try {
+          final streamTest = await http
+              .head(
+                Uri.parse('http://${device.ipAddress}/stream'),
+              )
+              .timeout(const Duration(seconds: 3));
+
+          if (streamTest.statusCode == 200) {
+            print('✅ Stream endpoint OK');
+          }
+        } catch (e) {
+          print('⚠️ Stream endpoint check failed: $e');
+        }
 
         _connectedDevice = ESP32Device(
           ipAddress: device.ipAddress,
@@ -318,8 +353,8 @@ class CameraService {
 
     try {
       final response = await http
-          .head(
-            Uri.parse('http://${_connectedDevice!.ipAddress}/'),
+          .get(
+            Uri.parse('http://${_connectedDevice!.ipAddress}/status'),
           )
           .timeout(const Duration(seconds: 5));
 
