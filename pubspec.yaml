@@ -12,6 +12,8 @@ dependencies:
   flutter:
     sdk: flutter
 
+  url_launcher: ^6.2.1
+
   # Firebase - UPDATED TO LATEST COMPATIBLE VERSIONS
   firebase_core: ^4.2.1 # Updated to match storage requirement
   firebase_auth: ^6.1.2 # Updated to match core 4.x
