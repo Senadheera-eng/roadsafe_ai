@@ -73,7 +73,6 @@ class _HelpSupportPageState extends State<HelpSupportPage>
       _showInfoSnackBar('Could not open email client.');
     }
 
-    // Simulation (this code runs when the real launch code is commented out):
     //_showInfoSnackBar('Opening email client for: $email');
   }
 

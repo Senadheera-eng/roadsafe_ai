@@ -306,17 +306,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ],
                               ),
 
-                              // Action Buttons
+                              // Action Buttons (Only Profile Button Remains)
                               Row(
                                 children: [
-                                  // Notification Button
-                                  _buildActionButton(
-                                    icon: Icons.notifications_rounded,
-                                    onTap: () => _showNotifications(),
-                                    showBadge: true,
-                                    badgeCount: 3,
-                                  ),
-                                  const SizedBox(width: 12),
+                                  // Removed Notification Button here
+                                  // const SizedBox(width: 12), // Removed extra spacing
 
                                   // Profile Button
                                   _buildActionButton(
@@ -409,6 +403,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     bool showBadge = false,
     int badgeCount = 0,
   }) {
+    // This function is still needed for the Profile button, but simplified
     return GestureDetector(
       onTap: onTap,
       child: Stack(
@@ -427,7 +422,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             child: Icon(icon, color: Colors.white, size: 22),
           ),
 
-          // Badge
+          // Badge (Kept for completeness, though notification button is gone)
           if (showBadge && badgeCount > 0)
             Positioned(
               right: 6,
@@ -786,137 +781,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  void _showFeatureNotification(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.rocket_launch_rounded,
-                color: Colors.white,
-                size: 16,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '$feature feature launching soon!',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        margin: const EdgeInsets.all(16),
-        elevation: 8,
-      ),
-    );
-  }
-
-  void _showNotifications() {
-    // ... (Notifications implementation remains the same)
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        minChildSize: 0.3,
-        builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.textHint,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Text(
-                      'Notifications',
-                      style: AppTextStyles.headlineSmall.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.error.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '3 new',
-                        style: AppTextStyles.labelSmall.copyWith(
-                          color: AppColors.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  children: [
-                    _buildNotificationItem(
-                      icon: Icons.check_circle_rounded,
-                      title: 'System Ready',
-                      subtitle: 'ESP32 device connected successfully',
-                      time: '2 min ago',
-                      color: AppColors.success,
-                    ),
-                    _buildNotificationItem(
-                      icon: Icons.update_rounded,
-                      title: 'Software Update',
-                      subtitle: 'New features available for download',
-                      time: '1 hour ago',
-                      color: AppColors.info,
-                    ),
-                    _buildNotificationItem(
-                      icon: Icons.tips_and_updates_rounded,
-                      title: 'Safety Tip',
-                      subtitle:
-                          'Take breaks every 2 hours for optimal alertness',
-                      time: '3 hours ago',
-                      color: AppColors.warning,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
+  // --- REMOVED Notification Logic ---
+  // The _showNotifications() and _buildNotificationItem() functions were removed
+  // to eliminate the unused functionality.
+  // -----------------------------------
 
   // UPDATED: Implementation of navigation and logout logic
   void _showProfileMenu() {
@@ -955,7 +823,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Settings Navigation
+            // Settings Navigation (Existing)
             _buildMenuTile(
               icon: Icons.settings_rounded,
               title: 'Settings',
@@ -981,28 +849,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Logout Action (UPDATED)
+            // Logout Action
             _buildMenuTile(
               icon: Icons.logout_rounded,
               title: 'Logout',
               color: AppColors.error,
               onTap: () async {
-                // Show a confirmation dialog
+                // Show a confirmation dialog (instead of alert)
                 final confirmed = await _showLogoutConfirmation(context);
-
                 if (confirmed) {
-                  // 1. Perform logout
+                  // Perform logout and navigate to Login page (assumed to be LoginPage)
                   await FirebaseAuth.instance.signOut();
-
-                  // 2. FIX: Close the bottom sheet AND the Home Page
-                  // This forces the app to go back to the root (AuthWrapper -> LoginPage)
-                  if (context.mounted) {
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                  }
-                } else {
-                  // If cancelled, just close the menu
-                  Navigator.pop(context);
+                  // The AuthWrapper in main.dart will handle navigation to LoginPage
                 }
+                Navigator.pop(
+                    context); // Close the modal (if confirmation was shown or not)
               },
             ),
             const SizedBox(height: 16),
