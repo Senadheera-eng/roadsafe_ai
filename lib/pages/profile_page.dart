@@ -128,6 +128,12 @@ class _ProfilePageState extends State<ProfilePage>
     final confirmed = await _showDeleteConfirmation(context);
     if (confirmed) {
       try {
+        // Optional: Add logic to delete the file from Firebase Storage here
+        // if (FirebaseAuth.instance.currentUser?.photoURL != null) {
+        //   final storageRef = FirebaseStorage.instance.refFromURL(FirebaseAuth.instance.currentUser!.photoURL!);
+        //   await storageRef.delete();
+        // }
+
         await FirebaseAuth.instance.currentUser?.updatePhotoURL(null);
         await FirebaseAuth.instance.currentUser?.reload();
 
@@ -584,40 +590,8 @@ class _ProfilePageState extends State<ProfilePage>
                             : 'N/A',
                         iconColor: AppColors.accent,
                       ),
-                      const SizedBox(height: 24),
-                      _buildSectionTitle('Connected Devices'),
-                      const SizedBox(height: 12),
-                      _buildDeviceCard(
-                        name: 'ESP32-CAM Module',
-                        status: 'Online',
-                        connection: 'WiFi Connected',
-                        signalStrength: 'Excellent',
-                        isOnline: true,
-                      ),
-                      const SizedBox(height: 24),
-                      _buildSectionTitle('Achievements'),
-                      const SizedBox(height: 12),
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildAchievementCard(
-                              icon: Icons.emoji_events_rounded,
-                              title: 'Safe Driver',
-                              subtitle: '30 days streak',
-                              color: Colors.amber,
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildAchievementCard(
-                              icon: Icons.flash_on_rounded,
-                              title: 'Quick React',
-                              subtitle: '100 alerts',
-                              color: Colors.orange,
-                            ),
-                          ),
-                        ],
-                      ),
+                      // Removed 'Connected Devices' section
+                      // Removed 'Achievements' section
                       const SizedBox(height: 32),
                     ],
                   ),
@@ -732,179 +706,6 @@ class _ProfilePageState extends State<ProfilePage>
                 ),
               ],
             ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDeviceCard({
-    required String name,
-    required String status,
-    required String connection,
-    required String signalStrength,
-    required bool isOnline,
-  }) {
-    return GlassCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: isOnline
-                        ? AppColors.greenGradient
-                        : [Colors.grey, Colors.grey.shade400],
-                  ),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child:
-                    Icon(Icons.videocam_rounded, color: Colors.white, size: 28),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      name,
-                      style: AppTextStyles.titleMedium.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Row(
-                      children: [
-                        Container(
-                          width: 8,
-                          height: 8,
-                          decoration: BoxDecoration(
-                            color: isOnline ? AppColors.success : Colors.grey,
-                            shape: BoxShape.circle,
-                            boxShadow: isOnline
-                                ? [
-                                    BoxShadow(
-                                      color: AppColors.success.withOpacity(0.5),
-                                      blurRadius: 4,
-                                      spreadRadius: 1,
-                                    ),
-                                  ]
-                                : null,
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Text(
-                          status,
-                          style: AppTextStyles.bodySmall.copyWith(
-                            color: isOnline
-                                ? AppColors.success
-                                : AppColors.textSecondary,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Icon(
-                Icons.chevron_right_rounded,
-                color: AppColors.textSecondary,
-              ),
-            ],
-          ),
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(
-              color: AppColors.background,
-              borderRadius: BorderRadius.circular(12),
-            ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceAround,
-              children: [
-                _buildDeviceInfo(
-                  icon: Icons.wifi_rounded,
-                  label: connection,
-                ),
-                Container(
-                  width: 1,
-                  height: 30,
-                  color: AppColors.textHint.withOpacity(0.2),
-                ),
-                _buildDeviceInfo(
-                  icon: Icons.signal_cellular_alt_rounded,
-                  label: signalStrength,
-                ),
-              ],
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDeviceInfo({
-    required IconData icon,
-    required String label,
-  }) {
-    return Row(
-      children: [
-        Icon(icon, color: AppColors.textSecondary, size: 18),
-        const SizedBox(width: 8),
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-            fontWeight: FontWeight.w500,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAchievementCard({
-    required IconData icon,
-    required String title,
-    required String subtitle,
-    required Color color,
-  }) {
-    return GlassCard(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        children: [
-          Container(
-            width: 56,
-            height: 56,
-            decoration: BoxDecoration(
-              color: color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(
-                color: color.withOpacity(0.3),
-                width: 2,
-              ),
-            ),
-            child: Icon(icon, color: color, size: 28),
-          ),
-          const SizedBox(height: 12),
-          Text(
-            title,
-            style: AppTextStyles.titleSmall.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
-            textAlign: TextAlign.center,
-          ),
-          const SizedBox(height: 4),
-          Text(
-            subtitle,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
-            textAlign: TextAlign.center,
           ),
         ],
       ),
