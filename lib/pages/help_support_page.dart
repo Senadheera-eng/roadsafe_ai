@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/glass_card.dart';
@@ -43,6 +44,292 @@ class _HelpSupportPageState extends State<HelpSupportPage>
   void dispose() {
     _animationController.dispose();
     super.dispose();
+  }
+
+  // Function to simulate launching a URL (for external links like app store)
+  Future<void> _launchURL(String url) async {
+    _showInfoSnackBar('Redirecting to external link: $url');
+  }
+
+  // Function to handle opening the email client
+  Future<void> _sendEmail() async {
+    const email = 'roadsafeai.official@gmail.com';
+    const subject = 'Support Request - RoadSafe AI App';
+    const body = 'Please describe your issue below:';
+
+    final Uri emailLaunchUri = Uri(
+      scheme: 'mailto',
+      path: email,
+      query: 'subject=$subject&body=$body',
+    );
+
+    // Example of real launch logic (Requires the standard import)
+    if (await canLaunchUrl(emailLaunchUri)) {
+      await launchUrl(emailLaunchUri);
+    } else {
+      _showInfoSnackBar('Could not open email client.');
+    }
+
+    //_showInfoSnackBar('Opening email client for: $email');
+  }
+
+  // Rating Dialog Function
+  void _showRatingDialog() {
+    double selectedRating = 0;
+
+    final isDarkMode = Theme.of(context).brightness == Brightness.dark;
+    final primaryColor =
+        isDarkMode ? AppColors.primaryLight : AppColors.primary;
+    final surfaceColor = isDarkMode ? AppColors.surfaceDark : AppColors.surface;
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setState) {
+            return AlertDialog(
+              backgroundColor: surfaceColor,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(24)),
+              title: Row(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(8),
+                    decoration: BoxDecoration(
+                      color: primaryColor.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child:
+                        Icon(Icons.star_rounded, color: primaryColor, size: 24),
+                  ),
+                  const SizedBox(width: 12),
+                  Text('Rate RoadSafe AI', style: AppTextStyles.titleLarge),
+                ],
+              ),
+              contentPadding: const EdgeInsets.fromLTRB(24, 20, 24, 0),
+              content: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.center,
+                children: [
+                  Text(
+                    'Tap a star to give us your rating:',
+                    style: AppTextStyles.bodyMedium
+                        .copyWith(color: AppColors.textSecondary),
+                    textAlign: TextAlign.center,
+                  ),
+                  const SizedBox(height: 16),
+                  Center(
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: List.generate(5, (index) {
+                        final starIndex = index + 1;
+                        return GestureDetector(
+                          onTap: () {
+                            setState(() {
+                              selectedRating = starIndex.toDouble();
+                            });
+                          },
+                          child: SizedBox(
+                            width: 38,
+                            height: 38,
+                            child: Icon(
+                              starIndex <= selectedRating
+                                  ? Icons.star_rounded
+                                  : Icons.star_border_rounded,
+                              color: starIndex <= selectedRating
+                                  ? AppColors.warning
+                                  : AppColors.textHint,
+                              size: 32,
+                            ),
+                          ),
+                        );
+                      }),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  if (selectedRating > 0)
+                    Text(
+                      selectedRating >= 4
+                          ? 'Thank you for the high rating!'
+                          : 'We appreciate your feedback!',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w600,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                ],
+              ),
+              actionsPadding: const EdgeInsets.all(16),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: Text('Maybe Later',
+                      style: AppTextStyles.bodyMedium
+                          .copyWith(color: AppColors.textSecondary)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primaryColor,
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12)),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  ),
+                  onPressed: selectedRating == 0
+                      ? null
+                      : () {
+                          Navigator.pop(context);
+                          _showInfoSnackBar(
+                              'Your ${selectedRating.toInt()} star response has been recorded. Thank you!');
+                        },
+                  child: Text('Submit & Review',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                          color: Colors.white, fontWeight: FontWeight.w600)),
+                ),
+              ],
+            );
+          },
+        );
+      },
+    );
+  }
+
+  void _showComingSoonDialog(String feature) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                gradient:
+                    const LinearGradient(colors: AppColors.purpleGradient),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(
+                Icons.rocket_launch_rounded,
+                color: Colors.white,
+                size: 48,
+              ),
+            ),
+            const SizedBox(height: 20),
+            Text(
+              'Coming Soon!',
+              style: AppTextStyles.titleLarge.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '$feature is currently under development and will be available in the next update.',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+              textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text('Got it',
+                style: AppTextStyles.bodyMedium
+                    .copyWith(color: AppColors.primary)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showAboutDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(colors: AppColors.blueGradient),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child:
+                  const Icon(Icons.info_rounded, color: Colors.white, size: 24),
+            ),
+            const SizedBox(width: 12),
+            Text('About RoadSafe AI', style: AppTextStyles.titleLarge),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'Version 1.0.0',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.primary,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'RoadSafe AI is an advanced driver drowsiness detection system that uses ESP32-CAM hardware and AI-powered analysis to keep drivers safe on the road.',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              '© 2024 RoadSafe AI. All rights reserved.',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textHint,
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+            ),
+            onPressed: () => Navigator.pop(context),
+            child: Text('Close',
+                style: AppTextStyles.bodyMedium.copyWith(
+                    color: Colors.white, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showInfoSnackBar(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Row(
+          children: [
+            const Icon(Icons.info_rounded, color: Colors.white),
+            const SizedBox(width: 12),
+            Expanded(child: Text(message)),
+          ],
+        ),
+        backgroundColor: AppColors.info,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        margin: const EdgeInsets.all(16),
+      ),
+    );
   }
 
   @override
@@ -150,96 +437,23 @@ class _HelpSupportPageState extends State<HelpSupportPage>
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      // Quick Actions
-                      _buildSectionTitle('Quick Actions'),
-                      const SizedBox(height: 12),
-
-                      Row(
-                        children: [
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              icon: Icons.video_library_rounded,
-                              label: 'Tutorials',
-                              gradient: AppColors.blueGradient,
-                              onTap: () {
-                                _showComingSoonDialog('Video Tutorials');
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              icon: Icons.book_rounded,
-                              label: 'User Guide',
-                              gradient: AppColors.purpleGradient,
-                              onTap: () {
-                                _showComingSoonDialog('User Guide');
-                              },
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: _buildQuickActionCard(
-                              icon: Icons.troubleshoot_rounded,
-                              label: 'Troubleshoot',
-                              gradient: AppColors.orangeGradient,
-                              onTap: () {
-                                _showComingSoonDialog('Troubleshooting');
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-
-                      const SizedBox(height: 32),
-
-                      // Contact Support
+                      // --- Contact Support ---
                       _buildSectionTitle('Contact Support'),
                       const SizedBox(height: 12),
 
                       _buildContactCard(
                         icon: Icons.email_rounded,
                         title: 'Email Support',
-                        subtitle: 'support@roadsafeai.com',
+                        subtitle: 'roadsafeai.official@gmail.com',
                         description:
                             'Get help via email - We respond within 24 hours',
                         gradient: AppColors.blueGradient,
-                        onTap: () {
-                          _showInfoSnackBar('Opening email client...');
-                          // TODO: Implement email intent
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      _buildContactCard(
-                        icon: Icons.call_rounded,
-                        title: 'Emergency Hotline',
-                        subtitle: '+1 (800) 555-SAFE',
-                        description: 'Available 24/7 for urgent assistance',
-                        gradient: AppColors.orangeGradient,
-                        onTap: () {
-                          _showInfoSnackBar('Opening phone dialer...');
-                          // TODO: Implement phone call intent
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      _buildContactCard(
-                        icon: Icons.chat_bubble_rounded,
-                        title: 'Live Chat',
-                        subtitle: 'Chat with our support team',
-                        description: 'Monday - Friday: 9 AM - 6 PM EST',
-                        gradient: AppColors.greenGradient,
-                        onTap: () {
-                          _showComingSoonDialog('Live Chat');
-                        },
+                        onTap: _sendEmail,
                       ),
 
                       const SizedBox(height: 32),
 
-                      // FAQ Section
+                      // --- FAQ Section ---
                       _buildSectionTitle('Frequently Asked Questions'),
                       const SizedBox(height: 12),
 
@@ -303,41 +517,40 @@ class _HelpSupportPageState extends State<HelpSupportPage>
 
                       const SizedBox(height: 32),
 
-                      // Additional Resources
+                      // --- Additional Resources ---
                       _buildSectionTitle('Additional Resources'),
                       const SizedBox(height: 12),
 
-                      _buildResourceCard(
-                        icon: Icons.bug_report_rounded,
-                        title: 'Report a Bug',
-                        subtitle: 'Help us improve RoadSafe AI',
-                        gradient: AppColors.orangeGradient,
-                        onTap: () {
-                          _showComingSoonDialog('Bug Report');
-                        },
-                      ),
-
-                      const SizedBox(height: 12),
-
+                      // 1. Rate Our App (Calls _showRatingDialog)
                       _buildResourceCard(
                         icon: Icons.star_rounded,
                         title: 'Rate Our App',
-                        subtitle: 'Share your experience',
+                        subtitle: 'Share your experience with us',
                         gradient: AppColors.purpleGradient,
-                        onTap: () {
-                          _showInfoSnackBar('Opening app store...');
-                        },
+                        onTap: _showRatingDialog,
                       ),
 
                       const SizedBox(height: 12),
 
+                      // 2. About RoadSafe AI (Calls _showAboutDialog)
                       _buildResourceCard(
                         icon: Icons.info_rounded,
                         title: 'About RoadSafe AI',
-                        subtitle: 'Version 1.0.0',
+                        subtitle: 'View version and company information',
                         gradient: AppColors.blueGradient,
+                        onTap: _showAboutDialog,
+                      ),
+
+                      const SizedBox(height: 12),
+
+                      // 3. Report a Bug (Calls _showComingSoonDialog)
+                      _buildResourceCard(
+                        icon: Icons.bug_report_rounded,
+                        title: 'Report a Bug',
+                        subtitle: 'Help us improve the app',
+                        gradient: AppColors.orangeGradient,
                         onTap: () {
-                          _showAboutDialog();
+                          _showComingSoonDialog('Bug Report');
                         },
                       ),
 
@@ -358,52 +571,6 @@ class _HelpSupportPageState extends State<HelpSupportPage>
       title,
       style: AppTextStyles.titleLarge.copyWith(
         fontWeight: FontWeight.bold,
-      ),
-    );
-  }
-
-  Widget _buildQuickActionCard({
-    required IconData icon,
-    required String label,
-    required List<Color> gradient,
-    required VoidCallback onTap,
-  }) {
-    return GlassCard(
-      padding: EdgeInsets.zero,
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(16),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            children: [
-              Container(
-                width: 56,
-                height: 56,
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(colors: gradient),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: [
-                    BoxShadow(
-                      color: gradient.first.withOpacity(0.3),
-                      blurRadius: 8,
-                      offset: const Offset(0, 4),
-                    ),
-                  ],
-                ),
-                child: Icon(icon, color: Colors.white, size: 28),
-              ),
-              const SizedBox(height: 12),
-              Text(
-                label,
-                style: AppTextStyles.bodyMedium.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-                textAlign: TextAlign.center,
-              ),
-            ],
-          ),
-        ),
       ),
     );
   }
@@ -580,142 +747,6 @@ class _HelpSupportPageState extends State<HelpSupportPage>
             ],
           ),
         ),
-      ),
-    );
-  }
-
-  void _showComingSoonDialog(String feature) {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                gradient:
-                    const LinearGradient(colors: AppColors.purpleGradient),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(
-                Icons.rocket_launch_rounded,
-                color: Colors.white,
-                size: 48,
-              ),
-            ),
-            const SizedBox(height: 20),
-            Text(
-              'Coming Soon!',
-              style: AppTextStyles.titleLarge.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '$feature is currently under development and will be available in the next update.',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Got it',
-                style: AppTextStyles.bodyMedium
-                    .copyWith(color: AppColors.primary)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAboutDialog() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.surface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(colors: AppColors.blueGradient),
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child:
-                  const Icon(Icons.info_rounded, color: Colors.white, size: 24),
-            ),
-            const SizedBox(width: 12),
-            Text('About RoadSafe AI', style: AppTextStyles.titleLarge),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Version 1.0.0',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.primary,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              'RoadSafe AI is an advanced driver drowsiness detection system that uses ESP32-CAM hardware and AI-powered analysis to keep drivers safe on the road.',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-                height: 1.5,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text(
-              '© 2024 RoadSafe AI. All rights reserved.',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textHint,
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            onPressed: () => Navigator.pop(context),
-            child: Text('Close',
-                style: AppTextStyles.bodyMedium.copyWith(
-                    color: Colors.white, fontWeight: FontWeight.w600)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showInfoSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            const Icon(Icons.info_rounded, color: Colors.white),
-            const SizedBox(width: 12),
-            Expanded(child: Text(message)),
-          ],
-        ),
-        backgroundColor: AppColors.info,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        margin: const EdgeInsets.all(16),
       ),
     );
   }

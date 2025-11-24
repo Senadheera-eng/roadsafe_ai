@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
-import 'package:image_picker/image_picker.dart'; // NEW: For picking images
-import 'package:firebase_storage/firebase_storage.dart'; // NEW: For uploading to Firebase Storage
-import 'dart:io'; // NEW: For File operations
+import 'package:image_picker/image_picker.dart';
+import 'package:firebase_storage/firebase_storage.dart';
+import 'dart:io';
 
 import '../widgets/glass_card.dart';
 import '../theme/app_colors.dart';
@@ -59,7 +59,6 @@ class _SettingsPageState extends State<SettingsPage>
 
   // --- Account Management Methods ---
 
-  // UPDATED: This function now handles picking, uploading, and updating the profile picture
   Future<void> _changeProfilePicture() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) {
@@ -73,7 +72,7 @@ class _SettingsPageState extends State<SettingsPage>
     // Show a dialog to let the user choose between gallery or camera
     await showModalBottomSheet(
       context: context,
-      backgroundColor: AppColors.surface, // Adjust to your theme
+      backgroundColor: AppColors.surface,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(25.0)),
       ),
@@ -92,7 +91,7 @@ class _SettingsPageState extends State<SettingsPage>
               leading: const Icon(Icons.photo_library_rounded),
               title: Text('Gallery', style: AppTextStyles.bodyMedium),
               onTap: () async {
-                Navigator.pop(context); // Close the bottom sheet
+                Navigator.pop(context);
                 image = await picker.pickImage(source: ImageSource.gallery);
               },
             ),
@@ -100,7 +99,7 @@ class _SettingsPageState extends State<SettingsPage>
               leading: const Icon(Icons.camera_alt_rounded),
               title: Text('Camera', style: AppTextStyles.bodyMedium),
               onTap: () async {
-                Navigator.pop(context); // Close the bottom sheet
+                Navigator.pop(context);
                 image = await picker.pickImage(source: ImageSource.camera);
               },
             ),
@@ -123,7 +122,7 @@ class _SettingsPageState extends State<SettingsPage>
       final storageRef = FirebaseStorage.instance
           .ref()
           .child('profile_pictures')
-          .child('${user.uid}.jpg'); // Use user's UID to name the file
+          .child('${user.uid}.jpg');
 
       final uploadTask = storageRef.putFile(file);
       final snapshot = await uploadTask.whenComplete(() {});
@@ -136,15 +135,11 @@ class _SettingsPageState extends State<SettingsPage>
       await user.reload();
 
       // 4. Get the *reloaded* current user to ensure we have the latest data
-      await FirebaseAuth.instance.currentUser!
-          .reload(); // Ensure current user is refreshed
+      await FirebaseAuth.instance.currentUser!.reload();
 
       // 5. Force the UI to rebuild with the new data
       if (mounted) {
-        setState(() {
-          // This empty setState triggers the build method to run again,
-          // fetching the new FirebaseAuth.instance.currentUser's photoURL
-        });
+        setState(() {});
       }
 
       _showSuccessSnackBar('Profile photo updated successfully!');
@@ -736,21 +731,15 @@ class _SettingsPageState extends State<SettingsPage>
                 decoration: BoxDecoration(
                   gradient: imageUrl == null
                       ? LinearGradient(colors: gradient)
-                      : null, // Apply gradient only if no image
+                      : null,
                   borderRadius: BorderRadius.circular(12),
                   image: imageUrl != null
                       ? DecorationImage(
                           image: NetworkImage(imageUrl),
                           fit: BoxFit.cover,
-                          // NEW: Add a key to NetworkImage to force a reload
-                          // This is crucial to avoid caching issues with the same URL (though Firebase Storage generates unique ones)
-                          // You can also add a `cache bust` query parameter if your server doesn't provide new URLs.
-                          // For Firebase Storage, the URL usually changes if the file is replaced, but this doesn't hurt.
-                          // If profile pictures don't show after upload, consider adding a unique `key: ValueKey(imageUrl)`
                         )
                       : null,
                 ),
-                // Only show the icon if there is no image
                 child: imageUrl == null
                     ? Icon(icon, color: Colors.white, size: 24)
                     : null,

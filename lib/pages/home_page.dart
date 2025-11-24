@@ -7,12 +7,12 @@ import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
 import 'safety_guide_page.dart';
 import 'device_setup_page.dart';
-import 'analytics_page.dart'; // NEW
-import '../services/data_service.dart'; // NEW
+import 'analytics_page.dart';
+import '../services/data_service.dart';
 import 'settings_page.dart';
-import 'profile_page.dart'; // NEW IMPORT
-import 'help_support_page.dart'; // NEW IMPORT
-import 'login_page.dart'; // NEW IMPORT for Logout
+import 'profile_page.dart';
+import 'help_support_page.dart';
+import 'login_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,7 +22,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  final DataService _dataService = DataService(); // NEW
+  final DataService _dataService = DataService();
 
   late AnimationController _welcomeAnimationController;
   late AnimationController _cardsAnimationController;
@@ -35,15 +35,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _initializeAnimations();
     _startAnimations();
-    _ensureMockData(); // NEW: Create mock data on startup
+    _ensureMockData();
   }
 
-  // NEW: Mock data generation for initial demo
+  // Mock data generation for initial demo
   void _ensureMockData() async {
     final sessionsStream = _dataService.getSessions();
     final firstSnapshot = await sessionsStream.first;
 
-    // Only generate mock data if no sessions exist
     if (firstSnapshot.isEmpty) {
       // Simulate a successful recent session (high score)
       final session1 = DrivingSession(
@@ -171,7 +170,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // NEW: Navigation for Analytics Page
   void _navigateToAnalytics() {
     Navigator.push(
       context,
@@ -306,17 +304,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ],
                               ),
 
-                              // Action Buttons
+                              // Action Buttons (Only Profile Button Remains)
                               Row(
                                 children: [
-                                  // Notification Button
-                                  _buildActionButton(
-                                    icon: Icons.notifications_rounded,
-                                    onTap: () => _showNotifications(),
-                                    showBadge: true,
-                                    badgeCount: 3,
-                                  ),
-                                  const SizedBox(width: 12),
+                                  // Removed Notification Button here
+                                  // const SizedBox(width: 12), // Removed extra spacing
 
                                   // Profile Button
                                   _buildActionButton(
@@ -426,8 +418,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ),
             child: Icon(icon, color: Colors.white, size: 22),
           ),
-
-          // Badge
           if (showBadge && badgeCount > 0)
             Positioned(
               right: 6,
@@ -692,7 +682,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             crossAxisCount: 2,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            childAspectRatio: 0.85,
+            childAspectRatio: 0.95,
             children: [
               FeatureCard(
                 icon: Icons.videocam_rounded,
@@ -708,8 +698,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
-                onTap: () =>
-                    _navigateToAnalytics(), // UPDATED: Navigate to Analytics Page
+                onTap: () => _navigateToAnalytics(),
               ),
               FeatureCard(
                 icon: Icons.settings_rounded,
@@ -786,139 +775,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  void _showFeatureNotification(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.primary,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: const Icon(
-                Icons.rocket_launch_rounded,
-                color: Colors.white,
-                size: 16,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                '$feature feature launching soon!',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ),
-          ],
-        ),
-        backgroundColor: AppColors.primary,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        margin: const EdgeInsets.all(16),
-        elevation: 8,
-      ),
-    );
-  }
-
-  void _showNotifications() {
-    // ... (Notifications implementation remains the same)
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      isScrollControlled: true,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.6,
-        maxChildSize: 0.9,
-        minChildSize: 0.3,
-        builder: (context, scrollController) => Container(
-          decoration: const BoxDecoration(
-            color: AppColors.surface,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                margin: const EdgeInsets.only(top: 12),
-                width: 40,
-                height: 4,
-                decoration: BoxDecoration(
-                  color: AppColors.textHint,
-                  borderRadius: BorderRadius.circular(2),
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(20),
-                child: Row(
-                  children: [
-                    Text(
-                      'Notifications',
-                      style: AppTextStyles.headlineSmall.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const Spacer(),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      decoration: BoxDecoration(
-                        color: AppColors.error.withOpacity(0.1),
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                      child: Text(
-                        '3 new',
-                        style: AppTextStyles.labelSmall.copyWith(
-                          color: AppColors.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  children: [
-                    _buildNotificationItem(
-                      icon: Icons.check_circle_rounded,
-                      title: 'System Ready',
-                      subtitle: 'ESP32 device connected successfully',
-                      time: '2 min ago',
-                      color: AppColors.success,
-                    ),
-                    _buildNotificationItem(
-                      icon: Icons.update_rounded,
-                      title: 'Software Update',
-                      subtitle: 'New features available for download',
-                      time: '1 hour ago',
-                      color: AppColors.info,
-                    ),
-                    _buildNotificationItem(
-                      icon: Icons.tips_and_updates_rounded,
-                      title: 'Safety Tip',
-                      subtitle:
-                          'Take breaks every 2 hours for optimal alertness',
-                      time: '3 hours ago',
-                      color: AppColors.warning,
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  // UPDATED: Implementation of navigation and logout logic
+  // Implementation of navigation and logout logic
   void _showProfileMenu() {
     showModalBottomSheet(
       context: context,
@@ -955,7 +812,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Settings Navigation
+            // Settings Navigation (Existing)
             _buildMenuTile(
               icon: Icons.settings_rounded,
               title: 'Settings',
@@ -981,7 +838,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 );
               },
             ),
-            // Logout Action (UPDATED)
+            // Logout Action
             _buildMenuTile(
               icon: Icons.logout_rounded,
               title: 'Logout',
@@ -989,20 +846,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               onTap: () async {
                 // Show a confirmation dialog
                 final confirmed = await _showLogoutConfirmation(context);
-
                 if (confirmed) {
-                  // 1. Perform logout
                   await FirebaseAuth.instance.signOut();
-
-                  // 2. FIX: Close the bottom sheet AND the Home Page
-                  // This forces the app to go back to the root (AuthWrapper -> LoginPage)
-                  if (context.mounted) {
-                    Navigator.of(context).popUntil((route) => route.isFirst);
-                  }
-                } else {
-                  // If cancelled, just close the menu
-                  Navigator.pop(context);
                 }
+                Navigator.pop(
+                    context); // Close the modal (if confirmation was shown or not)
               },
             ),
             const SizedBox(height: 16),
@@ -1012,7 +860,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // NEW: Logout Confirmation Dialog
+  // Logout Confirmation Dialog
   Future<bool> _showLogoutConfirmation(BuildContext context) async {
     return await showDialog<bool>(
           context: context,
