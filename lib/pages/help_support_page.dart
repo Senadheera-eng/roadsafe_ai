@@ -46,15 +46,12 @@ class _HelpSupportPageState extends State<HelpSupportPage>
     super.dispose();
   }
 
-  // --- Utility Functions ---
-
   // Function to simulate launching a URL (for external links like app store)
   Future<void> _launchURL(String url) async {
-    // REAL CODE: if (await canLaunchUrl(Uri.parse(url))) { await launchUrl(Uri.parse(url)); }
     _showInfoSnackBar('Redirecting to external link: $url');
   }
 
-  // CORE FIX: Function to handle opening the email client
+  // Function to handle opening the email client
   Future<void> _sendEmail() async {
     const email = 'roadsafeai.official@gmail.com';
     const subject = 'Support Request - RoadSafe AI App';
@@ -76,11 +73,10 @@ class _HelpSupportPageState extends State<HelpSupportPage>
     //_showInfoSnackBar('Opening email client for: $email');
   }
 
-  // NEW: Rating Dialog Function
+  // Rating Dialog Function
   void _showRatingDialog() {
     double selectedRating = 0;
 
-    // Determine if we are in Dark Mode currently for dialog styling
     final isDarkMode = Theme.of(context).brightness == Brightness.dark;
     final primaryColor =
         isDarkMode ? AppColors.primaryLight : AppColors.primary;

@@ -590,8 +590,6 @@ class _ProfilePageState extends State<ProfilePage>
                             : 'N/A',
                         iconColor: AppColors.accent,
                       ),
-                      // Removed 'Connected Devices' section
-                      // Removed 'Achievements' section
                       const SizedBox(height: 32),
                     ],
                   ),

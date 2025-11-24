@@ -106,13 +106,14 @@ class _FeatureCardState extends State<FeatureCard>
                         ),
                       ),
 
-                    // Main content
+                    // Main content (Vertical Flex introduced here)
                     Padding(
                       padding: const EdgeInsets.all(20),
                       child: Column(
-                        mainAxisAlignment: MainAxisAlignment.center,
+                        // Align content to start to ensure icon is high
+                        crossAxisAlignment: CrossAxisAlignment.center,
                         children: [
-                          // Icon container with gradient background
+                          // Icon container (Fixed size)
                           Container(
                             width: 64,
                             height: 64,
@@ -148,24 +149,36 @@ class _FeatureCardState extends State<FeatureCard>
 
                           const SizedBox(height: 16),
 
-                          // Title
-                          Text(
-                            widget.title,
-                            style: AppTextStyles.titleLarge,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
+                          // EXPANDED SECTION: Allows Title/Subtitle to take up remaining height
+                          Expanded(
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                // Title (Fixed height, but contained)
+                                Text(
+                                  widget.title,
+                                  style: AppTextStyles.titleLarge,
+                                  textAlign: TextAlign.center,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
 
-                          const SizedBox(height: 8),
+                                const SizedBox(height: 4), // Reduced spacer
 
-                          // Subtitle
-                          Text(
-                            widget.subtitle,
-                            style: AppTextStyles.bodySmall,
-                            textAlign: TextAlign.center,
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
+                                // Subtitle (Wrapped in FittedBox for flexible scaling if needed)
+                                // We use Flexible to make sure the subtitle doesn't fight the title
+                                Flexible(
+                                  child: Text(
+                                    widget.subtitle,
+                                    style: AppTextStyles.bodySmall,
+                                    textAlign: TextAlign.center,
+                                    maxLines: 2,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                              ],
+                            ),
                           ),
                         ],
                       ),

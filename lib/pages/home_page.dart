@@ -7,12 +7,12 @@ import '../widgets/feature_card.dart';
 import '../widgets/glass_card.dart';
 import 'safety_guide_page.dart';
 import 'device_setup_page.dart';
-import 'analytics_page.dart'; // NEW
-import '../services/data_service.dart'; // NEW
+import 'analytics_page.dart';
+import '../services/data_service.dart';
 import 'settings_page.dart';
-import 'profile_page.dart'; // NEW IMPORT
-import 'help_support_page.dart'; // NEW IMPORT
-import 'login_page.dart'; // NEW IMPORT for Logout
+import 'profile_page.dart';
+import 'help_support_page.dart';
+import 'login_page.dart';
 
 class HomePage extends StatefulWidget {
   const HomePage({super.key});
@@ -22,7 +22,7 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
-  final DataService _dataService = DataService(); // NEW
+  final DataService _dataService = DataService();
 
   late AnimationController _welcomeAnimationController;
   late AnimationController _cardsAnimationController;
@@ -35,15 +35,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.initState();
     _initializeAnimations();
     _startAnimations();
-    _ensureMockData(); // NEW: Create mock data on startup
+    _ensureMockData();
   }
 
-  // NEW: Mock data generation for initial demo
+  // Mock data generation for initial demo
   void _ensureMockData() async {
     final sessionsStream = _dataService.getSessions();
     final firstSnapshot = await sessionsStream.first;
 
-    // Only generate mock data if no sessions exist
     if (firstSnapshot.isEmpty) {
       // Simulate a successful recent session (high score)
       final session1 = DrivingSession(
@@ -171,7 +170,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // NEW: Navigation for Analytics Page
   void _navigateToAnalytics() {
     Navigator.push(
       context,
@@ -403,7 +401,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     bool showBadge = false,
     int badgeCount = 0,
   }) {
-    // This function is still needed for the Profile button, but simplified
     return GestureDetector(
       onTap: onTap,
       child: Stack(
@@ -421,8 +418,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             ),
             child: Icon(icon, color: Colors.white, size: 22),
           ),
-
-          // Badge (Kept for completeness, though notification button is gone)
           if (showBadge && badgeCount > 0)
             Positioned(
               right: 6,
@@ -687,7 +682,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             crossAxisCount: 2,
             crossAxisSpacing: 16,
             mainAxisSpacing: 16,
-            childAspectRatio: 0.85,
+            childAspectRatio: 0.95,
             children: [
               FeatureCard(
                 icon: Icons.videocam_rounded,
@@ -703,8 +698,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 subtitle: 'AI-powered behavior insights',
                 color: AppColors.analytics,
                 gradientColors: AppColors.successGradient,
-                onTap: () =>
-                    _navigateToAnalytics(), // UPDATED: Navigate to Analytics Page
+                onTap: () => _navigateToAnalytics(),
               ),
               FeatureCard(
                 icon: Icons.settings_rounded,
@@ -781,12 +775,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // --- REMOVED Notification Logic ---
-  // The _showNotifications() and _buildNotificationItem() functions were removed
-  // to eliminate the unused functionality.
-  // -----------------------------------
-
-  // UPDATED: Implementation of navigation and logout logic
+  // Implementation of navigation and logout logic
   void _showProfileMenu() {
     showModalBottomSheet(
       context: context,
@@ -855,12 +844,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               title: 'Logout',
               color: AppColors.error,
               onTap: () async {
-                // Show a confirmation dialog (instead of alert)
+                // Show a confirmation dialog
                 final confirmed = await _showLogoutConfirmation(context);
                 if (confirmed) {
-                  // Perform logout and navigate to Login page (assumed to be LoginPage)
                   await FirebaseAuth.instance.signOut();
-                  // The AuthWrapper in main.dart will handle navigation to LoginPage
                 }
                 Navigator.pop(
                     context); // Close the modal (if confirmation was shown or not)
@@ -873,7 +860,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  // NEW: Logout Confirmation Dialog
+  // Logout Confirmation Dialog
   Future<bool> _showLogoutConfirmation(BuildContext context) async {
     return await showDialog<bool>(
           context: context,
