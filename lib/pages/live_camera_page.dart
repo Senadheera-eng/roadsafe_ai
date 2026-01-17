@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'dart:async';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 import '../services/camera_service.dart';
 import '../services/drowsiness_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/mjpeg_viewer.dart';
-import '../widgets/glass_card.dart';
 import 'device_setup_page.dart';
 
 class LiveCameraPage extends StatefulWidget {
@@ -20,6 +19,7 @@ class LiveCameraPage extends StatefulWidget {
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
   final CameraService _cameraService = CameraService();
+  final GlobalKey<MjpegViewerState> _mjpegKey = GlobalKey<MjpegViewerState>();
 
   bool _isConnected = false;
   bool _isConnecting = false;
@@ -48,6 +48,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   late AnimationController _alertController;
   late Animation<double> _alertAnimation;
 
+  // Image for detection overlay
+  ui.Image? _currentImage;
+
   @override
   void initState() {
     super.initState();
@@ -67,7 +70,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 
   void _initializeAnimations() {
-    // Pulse animation for recording indicator
     _pulseController = AnimationController(
       duration: const Duration(milliseconds: 1000),
       vsync: this,
@@ -81,7 +83,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       curve: Curves.easeInOut,
     ));
 
-    // Alert animation
     _alertController = AnimationController(
       duration: const Duration(milliseconds: 500),
       vsync: this,
@@ -106,7 +107,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     });
 
     try {
-      // Try quick connect with cached IP
       bool connected = await _cameraService.quickConnect();
 
       if (connected) {
@@ -116,7 +116,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         });
         _showMessage('Connected to ESP32-CAM', AppColors.success);
       } else {
-        // Try scanning for devices
         await _scanForDevices();
       }
     } catch (e) {
@@ -137,7 +136,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       final devices = await _cameraService.scanForDevices();
 
       if (devices.isNotEmpty) {
-        // Auto-connect to first device
         bool connected = await _cameraService.connectToDevice(devices.first);
 
         if (connected) {
@@ -201,6 +199,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     setState(() {
       _isMonitoring = false;
       _sessionStartTime = null;
+      _lastDetection = null;
     });
 
     if (_detectionCount > 0) {
@@ -212,12 +211,18 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     if (!_isConnected || !_isMonitoring) return;
 
     try {
-      // Capture current frame
-      final frameBytes = await _captureCurrentFrame();
-      if (frameBytes == null) return;
+      // Get current frame from MJPEG viewer
+      final currentFrame = _mjpegKey.currentState?.currentFrame;
+
+      if (currentFrame == null) {
+        print('⚠️ No frame available for detection');
+        return;
+      }
+
+      print('📸 Capturing frame for detection (${currentFrame.length} bytes)');
 
       // Analyze with Roboflow API
-      final result = await DrowsinessDetector.analyzeImage(frameBytes);
+      final result = await DrowsinessDetector.analyzeImage(currentFrame);
 
       if (result != null) {
         setState(() {
@@ -228,51 +233,47 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         // Check for drowsiness
         if (result.isDrowsy) {
           _consecutiveClosedFrames++;
+          print(
+              '⚠️ Drowsy frame detected ($_consecutiveClosedFrames consecutive)');
 
-          // Trigger alert if eyes closed for 3+ frames (>1.5 seconds)
+          // Trigger alert if eyes closed for 2+ frames (>1.5 seconds)
           if (_consecutiveClosedFrames >= 2) {
             await _triggerDrowsinessAlert();
           }
         } else {
+          if (_consecutiveClosedFrames > 0) {
+            print('✅ Eyes open - resetting counter');
+          }
           _consecutiveClosedFrames = 0;
         }
       }
     } catch (e) {
-      print('Detection error: $e');
+      print('❌ Detection error: $e');
     }
   }
 
-  Future<Uint8List?> _captureCurrentFrame() async {
-    // This method should capture the current frame from MJPEG stream
-    // For now, we'll return null - implement based on your MJPEG viewer
-    // You may need to add a method to MjpegViewer to get current frame
-    return null;
-  }
-
   Future<void> _triggerDrowsinessAlert() async {
-    if (_isAlerting) return; // Prevent multiple simultaneous alerts
+    if (_isAlerting) return;
 
     setState(() {
       _isAlerting = true;
       _alertCount++;
     });
 
-    // Animate alert indicator
+    print('🚨 Triggering drowsiness alert (Alert #$_alertCount)');
+
     _alertController.forward().then((_) {
       _alertController.reverse();
     });
 
-    // Trigger vibration patterns
     try {
       await DrowsinessDetector.triggerDrowsinessAlert();
     } catch (e) {
-      print('Alert error: $e');
+      print('❌ Alert error: $e');
     }
 
-    // Show on-screen alert
     _showAlertDialog();
 
-    // Reset alert state after 5 seconds
     await Future.delayed(const Duration(seconds: 5));
     setState(() {
       _isAlerting = false;
@@ -286,17 +287,11 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       barrierDismissible: false,
       builder: (context) => AlertDialog(
         backgroundColor: AppColors.error,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(20),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            const Icon(
-              Icons.warning_rounded,
-              color: Colors.white,
-              size: 80,
-            ),
+            const Icon(Icons.warning_rounded, color: Colors.white, size: 80),
             const SizedBox(height: 16),
             Text(
               'DROWSINESS DETECTED!',
@@ -308,10 +303,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
             const SizedBox(height: 8),
             Text(
-              'Please take a break or pull over safely',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: Colors.white70,
-              ),
+              _lastDetection?.hasYawn == true
+                  ? 'Yawning detected - Take a break!'
+                  : 'Eyes closed for too long - Pull over safely!',
+              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 24),
@@ -320,10 +315,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.white,
                 foregroundColor: AppColors.error,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 32,
-                  vertical: 12,
-                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
               ),
               child: const Text('I\'m Awake'),
             ),
@@ -377,9 +370,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           Text(label, style: AppTextStyles.bodyMedium),
           Text(
             value,
-            style: AppTextStyles.titleMedium.copyWith(
-              fontWeight: FontWeight.bold,
-            ),
+            style:
+                AppTextStyles.titleMedium.copyWith(fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -392,10 +384,12 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
   void _startFPSCounter() {
     _fpsTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
-      setState(() {
-        _currentFPS = _frameCount.toDouble();
-        _frameCount = 0;
-      });
+      if (mounted) {
+        setState(() {
+          _currentFPS = _frameCount.toDouble();
+          _frameCount = 0;
+        });
+      }
     });
   }
 
@@ -413,9 +407,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         content: Text(message),
         backgroundColor: color,
         behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(12),
-        ),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         margin: const EdgeInsets.all(16),
         duration: const Duration(seconds: 2),
       ),
@@ -434,18 +426,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       body: SafeArea(
         child: Column(
           children: [
-            // Status Bar
             _buildStatusBar(),
-
-            // Camera Feed
-            Expanded(
-              child: _buildCameraFeed(),
-            ),
-
-            // Detection Info
+            Expanded(child: _buildCameraFeed()),
             if (_isMonitoring) _buildDetectionInfo(),
-
-            // Control Panel
             _buildControlPanel(),
           ],
         ),
@@ -458,15 +441,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       title: Text('Live Camera Feed', style: AppTextStyles.headlineMedium),
       backgroundColor: AppColors.primary,
       foregroundColor: Colors.white,
-      actions: [
-        // Settings button
-        IconButton(
-          icon: const Icon(Icons.settings),
-          onPressed: () {
-            // Navigate to settings
-          },
-        ),
-      ],
     );
   }
 
@@ -478,7 +452,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           : AppColors.warning.withOpacity(0.1),
       child: Row(
         children: [
-          // Connection Status
           Container(
             width: 12,
             height: 12,
@@ -521,8 +494,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               ],
             ),
           ),
-
-          // FPS Counter
           if (_isConnected)
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -556,10 +527,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           children: [
             const CircularProgressIndicator(),
             const SizedBox(height: 16),
-            Text(
-              'Connecting to ESP32-CAM...',
-              style: AppTextStyles.bodyLarge,
-            ),
+            Text('Connecting to ESP32-CAM...', style: AppTextStyles.bodyLarge),
           ],
         ),
       );
@@ -570,11 +538,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.videocam_off_rounded,
-              size: 80,
-              color: AppColors.textHint,
-            ),
+            const Icon(Icons.videocam_off_rounded,
+                size: 80, color: AppColors.textHint),
             const SizedBox(height: 24),
             Text(
               'Camera Disconnected',
@@ -585,9 +550,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             const SizedBox(height: 8),
             Text(
               'Scan for ESP32-CAM devices to connect',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textHint,
-              ),
+              style:
+                  AppTextStyles.bodyMedium.copyWith(color: AppColors.textHint),
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
@@ -598,10 +562,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
-                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
             ),
             const SizedBox(height: 16),
@@ -609,9 +571,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               onPressed: () {
                 Navigator.push(
                   context,
-                  MaterialPageRoute(
-                    builder: (_) => const DeviceSetupPage(),
-                  ),
+                  MaterialPageRoute(builder: (_) => const DeviceSetupPage()),
                 );
               },
               icon: const Icon(Icons.settings),
@@ -629,6 +589,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           color: Colors.black,
           child: Center(
             child: MjpegViewer(
+              key: _mjpegKey,
               streamUrl: _cameraService.streamUrl,
               fit: BoxFit.contain,
               onFrameReceived: _onFrameReceived,
@@ -637,7 +598,24 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         ),
 
         // Detection Overlay
-        if (_lastDetection != null && _isMonitoring) _buildDetectionOverlay(),
+        if (_lastDetection != null && _isMonitoring)
+          CustomPaint(
+            painter: DetectionOverlayPainter(
+              detectionResult: _lastDetection!,
+              imageSize: Size(MediaQuery.of(context).size.width,
+                  MediaQuery.of(context).size.height * 0.6),
+            ),
+            child: Container(),
+          ),
+
+        // Eye Opening Percentage
+        if (_lastDetection != null && _isMonitoring)
+          Positioned(
+            bottom: 16,
+            left: 16,
+            right: 16,
+            child: _buildDetectionOverlay(),
+          ),
 
         // Recording Indicator
         if (_isMonitoring)
@@ -650,10 +628,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 return Transform.scale(
                   scale: _pulseAnimation.value,
                   child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 6,
-                    ),
+                    padding:
+                        const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: AppColors.error,
                       borderRadius: BorderRadius.circular(20),
@@ -699,9 +675,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               animation: _alertAnimation,
               builder: (context, child) {
                 return Container(
-                  color: AppColors.error.withOpacity(
-                    0.3 * _alertAnimation.value,
-                  ),
+                  color:
+                      AppColors.error.withOpacity(0.3 * _alertAnimation.value),
                   child: Center(
                     child: Transform.scale(
                       scale: _alertAnimation.value,
@@ -714,11 +689,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(
-                              Icons.warning_rounded,
-                              color: Colors.white,
-                              size: 60,
-                            ),
+                            const Icon(Icons.warning_rounded,
+                                color: Colors.white, size: 60),
                             const SizedBox(height: 8),
                             Text(
                               'DROWSINESS\nDETECTED!',
@@ -742,65 +714,63 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 
   Widget _buildDetectionOverlay() {
-    return Positioned(
-      bottom: 16,
-      left: 16,
-      right: 16,
-      child: GlassCard(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            // Eye Opening Percentage
-            Row(
-              children: [
-                const Icon(Icons.remove_red_eye, size: 20, color: Colors.white),
-                const SizedBox(width: 8),
-                Text(
-                  'Eye Opening: ${_lastDetection!.eyeOpenPercentage.toStringAsFixed(0)}%',
-                  style: AppTextStyles.labelLarge.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: Colors.black.withOpacity(0.7),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.remove_red_eye, size: 20, color: Colors.white),
+              const SizedBox(width: 8),
+              Text(
+                'Eye Opening: ${_lastDetection!.eyeOpenPercentage.toStringAsFixed(0)}%',
+                style: AppTextStyles.labelLarge.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.w600,
                 ),
-                const Spacer(),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: _lastDetection!.isDrowsy
-                        ? AppColors.error
-                        : AppColors.success,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Text(
-                    _lastDetection!.isDrowsy ? 'DROWSY' : 'ALERT',
-                    style: AppTextStyles.labelSmall.copyWith(
-                      color: Colors.white,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            // Progress Bar
-            ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: _lastDetection!.eyeOpenPercentage / 100,
-                backgroundColor: Colors.white.withOpacity(0.3),
-                valueColor: AlwaysStoppedAnimation<Color>(
-                  _lastDetection!.eyeOpenPercentage > 50
-                      ? AppColors.success
-                      : AppColors.error,
-                ),
-                minHeight: 8,
               ),
+              const Spacer(),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _lastDetection!.isDrowsy
+                      ? AppColors.error
+                      : AppColors.success,
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  _lastDetection!.hasYawn
+                      ? 'YAWNING'
+                      : _lastDetection!.isDrowsy
+                          ? 'DROWSY'
+                          : 'ALERT',
+                  style: AppTextStyles.labelSmall.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: LinearProgressIndicator(
+              value: _lastDetection!.eyeOpenPercentage / 100,
+              backgroundColor: Colors.white.withOpacity(0.3),
+              valueColor: AlwaysStoppedAnimation<Color>(
+                _lastDetection!.eyeOpenPercentage > 50
+                    ? AppColors.success
+                    : AppColors.error,
+              ),
+              minHeight: 8,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
@@ -851,9 +821,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         const SizedBox(height: 4),
         Text(
           label,
-          style: AppTextStyles.labelSmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
+          style:
+              AppTextStyles.labelSmall.copyWith(color: AppColors.textSecondary),
         ),
         Text(
           value,
@@ -881,7 +850,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       ),
       child: Row(
         children: [
-          // Scan Button
           if (!_isConnected)
             Expanded(
               child: ElevatedButton.icon(
@@ -907,10 +875,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
               ),
             ),
-
-          // Monitoring Controls
           if (_isConnected) ...[
-            // Start/Stop Monitoring
             Expanded(
               flex: 2,
               child: ElevatedButton.icon(
@@ -930,8 +895,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               ),
             ),
             const SizedBox(width: 12),
-
-            // Disconnect Button
             IconButton(
               onPressed: _disconnect,
               icon: const Icon(Icons.power_settings_new),
@@ -946,4 +909,84 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       ),
     );
   }
+}
+
+// ============================================
+// DETECTION OVERLAY PAINTER
+// ============================================
+
+class DetectionOverlayPainter extends CustomPainter {
+  final DrowsinessResult detectionResult;
+  final Size imageSize;
+
+  DetectionOverlayPainter({
+    required this.detectionResult,
+    required this.imageSize,
+  });
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    for (var detection in detectionResult.detectionBoxes) {
+      // Convert normalized coordinates to screen coordinates
+      final rect = Rect.fromCenter(
+        center: Offset(
+          detection.x * size.width,
+          detection.y * size.height,
+        ),
+        width: detection.width * size.width,
+        height: detection.height * size.height,
+      );
+
+      // Choose color based on detection type
+      Color boxColor;
+      if (detection.isYawn) {
+        boxColor = Colors.orange;
+      } else if (detection.isDrowsy) {
+        boxColor = Colors.red;
+      } else {
+        boxColor = Colors.green;
+      }
+
+      // Draw bounding box
+      final paint = Paint()
+        ..color = boxColor
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = 3;
+
+      canvas.drawRect(rect, paint);
+
+      // Draw label background
+      final labelPaint = Paint()..color = boxColor;
+      final labelRect = Rect.fromLTWH(
+        rect.left,
+        rect.top - 24,
+        120,
+        24,
+      );
+      canvas.drawRect(labelRect, labelPaint);
+
+      // Draw label text
+      final textPainter = TextPainter(
+        text: TextSpan(
+          text:
+              '${detection.className} ${(detection.confidence * 100).toInt()}%',
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+        textDirection: TextDirection.ltr,
+      );
+      textPainter.layout();
+      textPainter.paint(
+        canvas,
+        Offset(rect.left + 4, rect.top - 20),
+      );
+    }
+  }
+
+  @override
+  bool shouldRepaint(DetectionOverlayPainter oldDelegate) =>
+      oldDelegate.detectionResult != detectionResult;
 }

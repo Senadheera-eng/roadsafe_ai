@@ -9,25 +9,30 @@ class MjpegViewer extends StatefulWidget {
   final String streamUrl;
   final BoxFit fit;
   final VoidCallback? onFrameReceived;
+  final Function(Uint8List)? onFrameCaptured; // Callback for frame capture
 
   const MjpegViewer({
     super.key,
     required this.streamUrl,
     this.fit = BoxFit.contain,
     this.onFrameReceived,
+    this.onFrameCaptured,
   });
 
   @override
-  State<MjpegViewer> createState() => _MjpegViewerState();
+  State<MjpegViewer> createState() => MjpegViewerState();
 }
 
-class _MjpegViewerState extends State<MjpegViewer> {
+class MjpegViewerState extends State<MjpegViewer> {
   Uint8List? _currentFrame;
   bool _isLoading = true;
   String? _error;
   StreamSubscription? _streamSubscription;
   http.Client? _httpClient;
   bool _isDisposed = false;
+
+  // Public getter for current frame (used by live_camera_page for detection)
+  Uint8List? get currentFrame => _currentFrame;
 
   @override
   void initState() {
@@ -64,9 +69,17 @@ class _MjpegViewerState extends State<MjpegViewer> {
 
       _httpClient = http.Client();
       final request = http.Request('GET', Uri.parse(widget.streamUrl));
+
+      // Add headers for better streaming
+      request.headers.addAll({
+        'Connection': 'keep-alive',
+        'Cache-Control': 'no-cache',
+      });
+
       final response = await _httpClient!.send(request);
 
       print('📡 Stream response: ${response.statusCode}');
+      print('📡 Content-Type: ${response.headers['content-type']}');
 
       if (response.statusCode != 200) {
         throw Exception('Stream error: ${response.statusCode}');
@@ -75,14 +88,16 @@ class _MjpegViewerState extends State<MjpegViewer> {
       List<int> buffer = [];
       bool inFrame = false;
       int jpegStart = -1;
+      int frameCount = 0;
 
       _streamSubscription = response.stream.listen(
         (chunk) {
           if (_isDisposed) return;
 
+          // Add new data to buffer
           buffer.addAll(chunk);
 
-          // Process buffer to find JPEG frames
+          // Process buffer to find and extract JPEG frames
           while (buffer.length > 2) {
             if (!inFrame) {
               // Look for JPEG start marker (0xFFD8)
@@ -95,7 +110,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
               }
 
               if (!inFrame) {
-                // No start marker found, keep last byte
+                // No start marker found, keep only last byte in case it's 0xFF
                 if (buffer.length > 1) {
                   buffer = [buffer.last];
                 }
@@ -112,17 +127,27 @@ class _MjpegViewerState extends State<MjpegViewer> {
                     buffer.sublist(jpegStart, i + 2),
                   );
 
+                  frameCount++;
+
                   if (!_isDisposed && mounted) {
                     setState(() {
                       _currentFrame = frame;
                       _isLoading = false;
                     });
 
-                    // Notify parent about new frame
+                    // Notify parent about new frame (for FPS counting)
                     widget.onFrameReceived?.call();
+
+                    // Send frame to parent for processing (for Roboflow detection)
+                    widget.onFrameCaptured?.call(frame);
+
+                    if (frameCount % 30 == 0) {
+                      print(
+                          '📸 Received $frameCount frames (${frame.length} bytes)');
+                    }
                   }
 
-                  // Remove processed data
+                  // Remove processed frame from buffer
                   buffer.removeRange(0, i + 2);
                   inFrame = false;
                   jpegStart = -1;
@@ -130,16 +155,20 @@ class _MjpegViewerState extends State<MjpegViewer> {
                 }
               }
 
-              // Prevent buffer overflow
+              // Prevent buffer overflow (2MB limit)
               if (buffer.length > 2 * 1024 * 1024) {
-                // 2MB limit
-                print('⚠️ Buffer overflow, resetting...');
+                print(
+                    '⚠️ Buffer overflow (${buffer.length} bytes), resetting...');
                 buffer.clear();
                 inFrame = false;
                 jpegStart = -1;
               }
 
-              break; // Wait for more data
+              // If we're still in a frame but don't have the end marker yet,
+              // wait for more data
+              if (inFrame && buffer.length < 1024 * 1024) {
+                break;
+              }
             }
           }
         },
@@ -156,13 +185,15 @@ class _MjpegViewerState extends State<MjpegViewer> {
           print('🔚 Stream ended');
           if (!_isDisposed && mounted) {
             setState(() {
-              _error = 'Stream ended';
+              _error = 'Stream ended unexpectedly';
               _isLoading = false;
             });
           }
         },
         cancelOnError: true,
       );
+
+      print('✅ MJPEG stream started successfully');
     } catch (e) {
       print('❌ Connection error: $e');
       if (!_isDisposed && mounted) {
@@ -175,6 +206,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _stopStream() {
+    print('🛑 Stopping MJPEG stream...');
     _streamSubscription?.cancel();
     _streamSubscription = null;
     _httpClient?.close();
@@ -182,12 +214,14 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _retry() {
+    print('🔄 Retrying stream connection...');
     _stopStream();
     _startStream();
   }
 
   @override
   Widget build(BuildContext context) {
+    // Loading state
     if (_isLoading) {
       return Center(
         child: Column(
@@ -199,11 +233,21 @@ class _MjpegViewerState extends State<MjpegViewer> {
               'Loading camera stream...',
               style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
             ),
+            const SizedBox(height: 8),
+            Text(
+              widget.streamUrl,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: Colors.white54,
+                fontSize: 10,
+              ),
+              textAlign: TextAlign.center,
+            ),
           ],
         ),
       );
     }
 
+    // Error state
     if (_error != null) {
       return Center(
         child: Column(
@@ -236,11 +280,26 @@ class _MjpegViewerState extends State<MjpegViewer> {
                     const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
             ),
+            const SizedBox(height: 12),
+            TextButton(
+              onPressed: () {
+                // Copy stream URL to clipboard for debugging
+                print('Stream URL: ${widget.streamUrl}');
+              },
+              child: Text(
+                'Stream URL: ${widget.streamUrl}',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: Colors.white54,
+                  fontSize: 10,
+                ),
+              ),
+            ),
           ],
         ),
       );
     }
 
+    // Waiting for frames state
     if (_currentFrame == null) {
       return Center(
         child: Column(
@@ -252,16 +311,23 @@ class _MjpegViewerState extends State<MjpegViewer> {
               'Waiting for frames...',
               style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
             ),
+            const SizedBox(height: 8),
+            Text(
+              'Stream connected, receiving data...',
+              style: AppTextStyles.bodySmall.copyWith(color: Colors.white54),
+            ),
           ],
         ),
       );
     }
 
+    // Display current frame
     return Image.memory(
       _currentFrame!,
       fit: widget.fit,
-      gaplessPlayback: true,
+      gaplessPlayback: true, // Smooth transitions between frames
       errorBuilder: (context, error, stackTrace) {
+        print('❌ Image decode error: $error');
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -271,6 +337,16 @@ class _MjpegViewerState extends State<MjpegViewer> {
               Text(
                 'Failed to decode frame',
                 style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'Frame size: ${_currentFrame!.length} bytes',
+                style: AppTextStyles.bodySmall.copyWith(color: Colors.white54),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _retry,
+                child: const Text('Retry'),
               ),
             ],
           ),
