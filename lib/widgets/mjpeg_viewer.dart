@@ -26,6 +26,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   bool _isLoading = true;
   String? _error;
   StreamSubscription? _streamSubscription;
+  http.Client? _httpClient;
   bool _isDisposed = false;
 
   @override
@@ -61,9 +62,9 @@ class _MjpegViewerState extends State<MjpegViewer> {
     try {
       print('📹 Starting MJPEG stream: ${widget.streamUrl}');
 
+      _httpClient = http.Client();
       final request = http.Request('GET', Uri.parse(widget.streamUrl));
-      final client = http.Client();
-      final response = await client.send(request);
+      final response = await _httpClient!.send(request);
 
       print('📡 Stream response: ${response.statusCode}');
 
@@ -176,6 +177,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   void _stopStream() {
     _streamSubscription?.cancel();
     _streamSubscription = null;
+    _httpClient?.close();
+    _httpClient = null;
   }
 
   void _retry() {

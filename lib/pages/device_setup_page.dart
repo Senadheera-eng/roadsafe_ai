@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/gradient_button.dart';
 import '../services/camera_service.dart';
+import 'camera_positioning_page.dart';
 
 class DeviceSetupPage extends StatefulWidget {
   const DeviceSetupPage({super.key});
@@ -386,6 +387,11 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   void _showSuccessAndFinish(String ip) {
+    // Save IP first
+    final cameraService = CameraService();
+    cameraService.setDiscoveredIP(ip);
+
+    // Show camera positioning dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -395,53 +401,65 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             const Icon(Icons.check_circle, color: AppColors.success, size: 32),
             const SizedBox(width: 8),
             Expanded(
-              child:
-                  Text('Setup Complete!', style: AppTextStyles.headlineMedium),
+              child: Text('ESP32 Found!', style: AppTextStyles.headlineMedium),
             ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'ESP32-CAM successfully configured!',
+              'ESP32-CAM is ready at $ip',
               style: AppTextStyles.bodyLarge,
+              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
-            _buildInfoRow('IP Address', ip, Icons.location_on),
-            const SizedBox(height: 8),
-            _buildInfoRow(
-                'Status', 'Online', Icons.check_circle, AppColors.success),
-            const SizedBox(height: 8),
-            _buildInfoRow('Camera', 'Ready', Icons.videocam, AppColors.success),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
+                color: AppColors.info.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.info),
               ),
-              child: Text(
-                'You can now use the Live Camera feature to monitor drowsiness!',
-                style: AppTextStyles.bodySmall,
-                textAlign: TextAlign.center,
+              child: Row(
+                children: [
+                  const Icon(Icons.videocam, color: AppColors.info, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Position the camera correctly for best results',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
         actions: [
-          ElevatedButton(
+          TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
               Navigator.pop(context); // Go back to home
             },
+            child: const Text('Skip'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CameraPositioningPage(deviceIP: ip),
+                ),
+              );
+            },
+            icon: const Icon(Icons.videocam),
+            label: const Text('Position Camera'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: const Text('Done'),
           ),
         ],
       ),
