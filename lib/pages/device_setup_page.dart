@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/gradient_button.dart';
 import '../services/camera_service.dart';
+import 'camera_positioning_page.dart';
 
 class DeviceSetupPage extends StatefulWidget {
   const DeviceSetupPage({super.key});
@@ -222,18 +223,30 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
       print('🔍 Scanning network: $networkBase.x');
 
-      // Priority IPs to check
-      final ipsToCheck = [1, 17, 42, 100, 101, 102, 103, 200, 201, 254];
+      // IMPROVED: Extended priority IPs based on common router assignments
+      final ipsToCheck = [
+        // Very common router assignments
+        1, // Gateway
+        100, 101, 102, 103, 104, 105, // DHCP range start
 
-      for (int ip in ipsToCheck) {
+        // Less common but possible
+        17, 42, 50, 51, 52, 53, 54, 55,
+
+        // Additional DHCP ranges
+        150, 151, 152, 153, 154, 155,
+        200, 201, 202, 203, 204, 205,
+
+        // End of range
+        250, 251, 252, 253, 254,
+      ];
+
+      // IMPROVED: Parallel scanning for faster results
+      print('🔍 Starting parallel scan of ${ipsToCheck.length} IPs...');
+
+      final futures = ipsToCheck.map((ip) async {
         final targetIP = '$networkBase.$ip';
 
-        setState(() {
-          _statusMessage = 'Checking $targetIP...';
-        });
-
         try {
-          // Just check if we can reach the IP
           final response = await http
               .get(
                 Uri.parse('http://$targetIP/'),
@@ -241,14 +254,86 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
               .timeout(const Duration(seconds: 2));
 
           if (response.statusCode == 200) {
-            // Check if response contains RoadSafe or camera keywords
+            final body = response.body.toLowerCase();
+
+            // IMPROVED: Better ESP32 detection
+            if (body.contains('roadsafe') ||
+                body.contains('drowsiness') ||
+                body.contains('esp32-cam') ||
+                body.contains('esp32cam') ||
+                (body.contains('camera') && body.contains('stream')) ||
+                body.contains('mjpeg')) {
+              print('✅ Found ESP32 at $targetIP');
+              return targetIP;
+            }
+          }
+        } catch (e) {
+          // Silently continue
+        }
+
+        return null;
+      }).toList();
+
+      // Wait for first successful result
+      String? foundIP;
+
+      for (var future in futures) {
+        final ip = await future;
+        if (ip != null) {
+          foundIP = ip;
+          break;
+        }
+      }
+
+      if (foundIP != null) {
+        print('✅ ESP32 found at $foundIP');
+
+        setState(() {
+          _esp32FinalIP = foundIP;
+          _currentStep = 3;
+          _isLoading = false;
+          _statusMessage = '';
+        });
+
+        // Save to camera service
+        final cameraService = CameraService();
+        await cameraService.setDiscoveredIP(foundIP);
+
+        _showSuccessAndFinish(foundIP);
+        return;
+      }
+
+      // IMPROVED: If parallel scan fails, try sequential scan with more IPs
+      print('⚠️ Parallel scan failed, trying sequential full scan...');
+
+      setState(() {
+        _statusMessage = 'Performing deep scan...';
+      });
+
+      for (int ip = 1; ip <= 254; ip++) {
+        final targetIP = '$networkBase.$ip';
+
+        if (ipsToCheck.contains(ip)) continue; // Already checked
+
+        setState(() {
+          _statusMessage = 'Checking $targetIP... (${ip}/254)';
+        });
+
+        try {
+          final response = await http
+              .get(
+                Uri.parse('http://$targetIP/'),
+              )
+              .timeout(const Duration(milliseconds: 1500));
+
+          if (response.statusCode == 200) {
             final body = response.body.toLowerCase();
 
             if (body.contains('roadsafe') ||
                 body.contains('drowsiness') ||
-                body.contains('camera') ||
-                body.contains('esp32')) {
-              print('✅ Found ESP32 at $targetIP');
+                body.contains('esp32') ||
+                (body.contains('camera') && body.contains('stream'))) {
+              print('✅ Found ESP32 at $targetIP (deep scan)');
 
               setState(() {
                 _esp32FinalIP = targetIP;
@@ -257,7 +342,6 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                 _statusMessage = '';
               });
 
-              // Save to camera service
               final cameraService = CameraService();
               await cameraService.setDiscoveredIP(targetIP);
 
@@ -266,9 +350,11 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             }
           }
         } catch (e) {
-          // Continue checking other IPs
-          continue;
+          // Continue scanning
         }
+
+        // Break early if taking too long
+        if (ip > 200 && !mounted) break;
       }
 
       // Not found - show manual entry
@@ -277,6 +363,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         _statusMessage = '';
       });
 
+      print('❌ ESP32 not found after full scan');
       _showManualIPDialog();
     } catch (e) {
       setState(() {
@@ -386,6 +473,11 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   void _showSuccessAndFinish(String ip) {
+    // Save IP first
+    final cameraService = CameraService();
+    cameraService.setDiscoveredIP(ip);
+
+    // Show camera positioning dialog
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -395,53 +487,65 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             const Icon(Icons.check_circle, color: AppColors.success, size: 32),
             const SizedBox(width: 8),
             Expanded(
-              child:
-                  Text('Setup Complete!', style: AppTextStyles.headlineMedium),
+              child: Text('ESP32 Found!', style: AppTextStyles.headlineMedium),
             ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'ESP32-CAM successfully configured!',
+              'ESP32-CAM is ready at $ip',
               style: AppTextStyles.bodyLarge,
+              textAlign: TextAlign.center,
             ),
-            const SizedBox(height: 16),
-            _buildInfoRow('IP Address', ip, Icons.location_on),
-            const SizedBox(height: 8),
-            _buildInfoRow(
-                'Status', 'Online', Icons.check_circle, AppColors.success),
-            const SizedBox(height: 8),
-            _buildInfoRow('Camera', 'Ready', Icons.videocam, AppColors.success),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
+                color: AppColors.info.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.info),
               ),
-              child: Text(
-                'You can now use the Live Camera feature to monitor drowsiness!',
-                style: AppTextStyles.bodySmall,
-                textAlign: TextAlign.center,
+              child: Row(
+                children: [
+                  const Icon(Icons.videocam, color: AppColors.info, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Position the camera correctly for best results',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
         ),
         actions: [
-          ElevatedButton(
+          TextButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
               Navigator.pop(context); // Go back to home
             },
+            child: const Text('Skip'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => CameraPositioningPage(deviceIP: ip),
+                ),
+              );
+            },
+            icon: const Icon(Icons.videocam),
+            label: const Text('Position Camera'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: const Text('Done'),
           ),
         ],
       ),
