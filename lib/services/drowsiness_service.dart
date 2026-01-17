@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'dart:typed_data';
-import 'dart:ui';
 import 'package:http/http.dart' as http;
 import 'package:vibration/vibration.dart';
+import 'dart:async';
 
 class DetectionBox {
   final double x;
@@ -29,7 +29,6 @@ class DetectionBox {
     final className = (json['class'] ?? '').toString().toLowerCase();
     final confidence = (json['confidence'] ?? 0.0).toDouble();
 
-    // Extract bounding box coordinates
     final x = (json['x'] ?? 0.0).toDouble();
     final y = (json['y'] ?? 0.0).toDouble();
     final width = (json['width'] ?? 0.0).toDouble();
@@ -38,26 +37,22 @@ class DetectionBox {
     bool isDrowsy = false;
     bool isYawn = false;
 
-    // Minimum confidence threshold
     if (confidence > 0.25) {
-      // Closed eyes indicators (HIGH PRIORITY for drowsiness)
       if (className.contains('closed') ||
           className.contains('close') ||
           className.contains('clos')) {
         isDrowsy = true;
       }
 
-      // Drowsiness/sleepiness indicators
       if (className.contains('drowsy') ||
           className.contains('sleepy') ||
           className.contains('tired')) {
         isDrowsy = true;
       }
 
-      // Yawning indicator
       if (className.contains('yawn')) {
         isYawn = true;
-        isDrowsy = true; // Yawning also indicates drowsiness
+        isDrowsy = true;
       }
     }
 
@@ -72,17 +67,6 @@ class DetectionBox {
       isYawn: isYawn,
     );
   }
-
-  // Convert normalized coordinates to pixel coordinates
-  Rect toRect(Size imageSize) {
-    // Roboflow returns center coordinates, convert to top-left
-    final left = (x - width / 2) * imageSize.width;
-    final top = (y - height / 2) * imageSize.height;
-    final right = (x + width / 2) * imageSize.width;
-    final bottom = (y + height / 2) * imageSize.height;
-
-    return Rect.fromLTRB(left, top, right, bottom);
-  }
 }
 
 class DrowsinessDetector {
@@ -90,14 +74,16 @@ class DrowsinessDetector {
   static const String API_URL = "https://detect.roboflow.com";
   static const String MODEL_ID = "drowsiness-driver/1";
 
+  // NEW: Continuous vibration control
+  static Timer? _vibrationTimer;
+  static bool _isVibrating = false;
+
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
       print('\n🔍 Analyzing frame (${imageBytes.length} bytes)...');
 
-      // Convert to base64
       String base64Image = base64Encode(imageBytes);
 
-      // Make API request with adjusted confidence threshold
       final response = await http
           .post(
             Uri.parse(
@@ -114,7 +100,6 @@ class DrowsinessDetector {
         final data = json.decode(response.body);
         final result = DrowsinessResult.fromJson(data);
 
-        // Log detection for debugging
         if (result.detectionBoxes.isNotEmpty) {
           print('📊 Detections: ${result.detectionBoxes.length}');
           for (var box in result.detectionBoxes) {
@@ -126,8 +111,6 @@ class DrowsinessDetector {
           }
           print(
               '  👁️ Eye Opening: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
-        } else {
-          print('⚠️ No detections found');
         }
 
         return result;
@@ -142,115 +125,104 @@ class DrowsinessDetector {
     }
   }
 
-  static Future<void> triggerDrowsinessAlert() async {
+  // NEW: Start continuous vibration that doesn't stop
+  static Future<void> startContinuousVibration() async {
+    if (_isVibrating) {
+      print('⚠️ Vibration already active');
+      return;
+    }
+
     print('');
     print('========================================');
-    print('🚨 DROWSINESS ALERT TRIGGERED!');
+    print('🚨 STARTING CONTINUOUS VIBRATION');
     print('========================================');
+
+    _isVibrating = true;
 
     try {
       bool? hasVibrator = await Vibration.hasVibrator();
       print('📱 Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
-        print('📳 Starting STRONG vibration patterns...');
+        // Start continuous vibration loop
+        _vibrationTimer = Timer.periodic(
+          const Duration(milliseconds: 2500),
+          (timer) async {
+            if (!_isVibrating) {
+              timer.cancel();
+              return;
+            }
 
-        // PATTERN 1: Long intense vibration (2.5 seconds)
-        try {
-          print('  → Pattern 1: Long intense burst');
-          await Vibration.vibrate(duration: 2500, amplitude: 255);
-          await Future.delayed(const Duration(milliseconds: 200));
-          print('  ✓ Pattern 1 completed');
-        } catch (e) {
-          print('  ✗ Pattern 1 failed: $e');
-        }
+            try {
+              // Pattern: Long vibration + Short pause + Long vibration
+              await Vibration.vibrate(
+                pattern: [
+                  0, 800, 100, 800, 100, 800, // Triple pulse
+                  200, // Short pause
+                  500, 100, 500, 100, 500, // Medium pulses (SOS-like)
+                ],
+                intensities: [
+                  0, 255, 0, 255, 0, 255, // Triple pulse
+                  0, // Pause
+                  255, 0, 255, 0, 255, // SOS
+                ],
+              );
+              print('📳 Vibration pattern executed');
+            } catch (e) {
+              print('⚠️ Vibration pattern error: $e');
+              // Fallback to simple vibration
+              try {
+                await Vibration.vibrate(duration: 1000, amplitude: 255);
+              } catch (e2) {
+                print('⚠️ Fallback vibration failed: $e2');
+              }
+            }
+          },
+        );
 
-        // PATTERN 2: Rapid triple pulse (URGENT)
-        try {
-          print('  → Pattern 2: Triple pulse');
-          await Vibration.vibrate(
-            pattern: [0, 400, 100, 400, 100, 400],
-            intensities: [0, 255, 0, 255, 0, 255],
-          );
-          await Future.delayed(const Duration(milliseconds: 200));
-          print('  ✓ Pattern 2 completed');
-        } catch (e) {
-          print('  ✗ Pattern 2 failed: $e');
-        }
-
-        // PATTERN 3: SOS pattern (. . . - - - . . .)
-        try {
-          print('  → Pattern 3: SOS emergency pattern');
-          await Vibration.vibrate(
-            pattern: [
-              0, 200, 100, 200, 100, 200, // . . .
-              200, // pause
-              500, 100, 500, 100, 500, // - - -
-              200, // pause
-              200, 100, 200, 100, 200 // . . .
-            ],
-            intensities: [
-              0,
-              255,
-              0,
-              255,
-              0,
-              255,
-              0,
-              0,
-              255,
-              0,
-              255,
-              0,
-              255,
-              0,
-              0,
-              255,
-              0,
-              255,
-              0,
-              255
-            ],
-          );
-          print('  ✓ Pattern 3 (SOS) completed');
-        } catch (e) {
-          print('  ✗ Pattern 3 failed: $e');
-        }
-
-        // PATTERN 4: Final warning burst
-        try {
-          print('  → Pattern 4: Final warning');
-          await Vibration.vibrate(duration: 1500, amplitude: 255);
-          print('  ✓ Pattern 4 completed');
-        } catch (e) {
-          print('  ✗ Pattern 4 failed: $e');
-        }
-
-        print('✅ ALL VIBRATION PATTERNS COMPLETED');
+        print('✅ CONTINUOUS VIBRATION STARTED');
+        print('   Will repeat every 2.5 seconds until stopped');
       } else {
-        print('⚠️ No vibrator detected, trying fallback...');
-
-        // Fallback: Basic vibration
-        try {
-          await Vibration.vibrate(duration: 2000);
-          await Future.delayed(const Duration(milliseconds: 300));
-          await Vibration.vibrate(duration: 2000);
-          print('✓ Fallback vibration completed');
-        } catch (e) {
-          print('✗ Fallback failed: $e');
-        }
+        print('⚠️ No vibrator detected');
+        _isVibrating = false;
       }
     } catch (e) {
-      print('❌ CRITICAL: Vibration error: $e');
+      print('❌ CRITICAL: Vibration initialization error: $e');
+      _isVibrating = false;
     }
 
     print('========================================');
     print('');
   }
 
-  static Future<void> testVibration() async {
-    print('🧪 Testing vibration manually...');
-    await triggerDrowsinessAlert();
+  // NEW: Stop continuous vibration
+  static Future<void> stopContinuousVibration() async {
+    print('');
+    print('========================================');
+    print('🛑 STOPPING CONTINUOUS VIBRATION');
+    print('========================================');
+
+    _isVibrating = false;
+    _vibrationTimer?.cancel();
+    _vibrationTimer = null;
+
+    try {
+      await Vibration.cancel();
+      print('✅ Vibration stopped');
+    } catch (e) {
+      print('⚠️ Error stopping vibration: $e');
+    }
+
+    print('========================================');
+    print('');
+  }
+
+  // NEW: Check if currently vibrating
+  static bool get isVibrating => _isVibrating;
+
+  // DEPRECATED: Old method (keep for compatibility but not used)
+  static Future<void> triggerDrowsinessAlert() async {
+    await startContinuousVibration();
   }
 }
 
@@ -278,7 +250,6 @@ class DrowsinessResult {
     int totalPredictions = 0;
     List<DetectionBox> detectionBoxes = [];
 
-    // Calculate eye states
     double totalOpenConfidence = 0.0;
     double totalClosedConfidence = 0.0;
     int openCount = 0;
@@ -296,7 +267,6 @@ class DrowsinessResult {
 
           final className = box.className.toLowerCase();
 
-          // Count eye states
           if (className.contains('open') ||
               className.contains('ope') ||
               className.contains('opene')) {
@@ -308,13 +278,11 @@ class DrowsinessResult {
             closedCount++;
           }
 
-          // Count yawns
           if (box.isYawn) {
             yawnCount++;
             hasYawn = true;
           }
 
-          // Track drowsiness
           if (box.isDrowsy) {
             isDrowsy = true;
             if (box.confidence > maxConfidence) {
@@ -334,7 +302,6 @@ class DrowsinessResult {
       }
     }
 
-    // Calculate eye opening percentage
     double eyeOpenPercentage = 100.0;
 
     if (openCount > 0 || closedCount > 0) {
@@ -350,7 +317,6 @@ class DrowsinessResult {
         eyeOpenPercentage = 0.0;
       }
 
-      // Clamp between 0-100
       eyeOpenPercentage = eyeOpenPercentage.clamp(0.0, 100.0);
     } else if (closedCount > 0) {
       eyeOpenPercentage = 0.0;

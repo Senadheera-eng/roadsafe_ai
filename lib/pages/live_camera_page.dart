@@ -196,6 +196,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
   void _stopMonitoring() {
     _detectionTimer?.cancel();
+
+    // NEW: Stop vibration if active
+    DrowsinessDetector.stopContinuousVibration();
+
     setState(() {
       _isMonitoring = false;
       _sessionStartTime = null;
@@ -266,61 +270,126 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _alertController.reverse();
     });
 
+    // NEW: Start continuous vibration
     try {
-      await DrowsinessDetector.triggerDrowsinessAlert();
+      await DrowsinessDetector.startContinuousVibration();
     } catch (e) {
       print('❌ Alert error: $e');
     }
 
+    // Show dialog (vibration continues until dismissed)
     _showAlertDialog();
-
-    await Future.delayed(const Duration(seconds: 5));
-    setState(() {
-      _isAlerting = false;
-      _consecutiveClosedFrames = 0;
-    });
   }
 
   void _showAlertDialog() {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        backgroundColor: AppColors.error,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(Icons.warning_rounded, color: Colors.white, size: 80),
-            const SizedBox(height: 16),
-            Text(
-              'DROWSINESS DETECTED!',
-              style: AppTextStyles.headlineMedium.copyWith(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
+      builder: (context) => WillPopScope(
+        onWillPop: () async => false, // Prevent back button
+        child: AlertDialog(
+          backgroundColor: AppColors.error,
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Animated warning icon
+              TweenAnimationBuilder<double>(
+                tween: Tween(begin: 0.0, end: 1.0),
+                duration: const Duration(milliseconds: 500),
+                builder: (context, value, child) {
+                  return Transform.scale(
+                    scale: 0.8 + (value * 0.4), // Pulse from 0.8 to 1.2
+                    child: Icon(
+                      Icons.warning_rounded,
+                      color: Colors.white,
+                      size: 80,
+                    ),
+                  );
+                },
               ),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              _lastDetection?.hasYawn == true
-                  ? 'Yawning detected - Take a break!'
-                  : 'Eyes closed for too long - Pull over safely!',
-              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
-              textAlign: TextAlign.center,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: () => Navigator.pop(context),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.white,
-                foregroundColor: AppColors.error,
+              const SizedBox(height: 16),
+              Text(
+                'DROWSINESS DETECTED!',
+                style: AppTextStyles.headlineMedium.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 8),
+              Text(
+                _lastDetection?.hasYawn == true
+                    ? 'Yawning detected - Take a break!'
+                    : 'Eyes closed for too long - Pull over safely!',
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 16),
+              // NEW: Vibration indicator
+              Container(
                 padding:
-                    const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.vibration, color: Colors.white, size: 16),
+                    const SizedBox(width: 8),
+                    Text(
+                      'Phone vibrating continuously...',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: Colors.white,
+                        fontStyle: FontStyle.italic,
+                      ),
+                    ),
+                  ],
+                ),
               ),
-              child: const Text('I\'m Awake'),
-            ),
-          ],
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: () async {
+                  // NEW: Stop vibration when button pressed
+                  await DrowsinessDetector.stopContinuousVibration();
+
+                  Navigator.pop(context);
+
+                  // Reset alert state after a delay
+                  await Future.delayed(const Duration(seconds: 2));
+                  setState(() {
+                    _isAlerting = false;
+                    _consecutiveClosedFrames = 0;
+                  });
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.white,
+                  foregroundColor: AppColors.error,
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.check_circle, size: 24),
+                    const SizedBox(width: 8),
+                    Text(
+                      'I\'m Awake',
+                      style: AppTextStyles.titleMedium.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
