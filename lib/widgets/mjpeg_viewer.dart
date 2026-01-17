@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:typed_data';
+import 'dart:async';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 
@@ -24,7 +25,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
   Uint8List? _currentFrame;
   bool _isLoading = true;
   String? _error;
-  http.Client? _httpClient;
+  StreamSubscription? _streamSubscription;
   bool _isDisposed = false;
 
   @override
@@ -58,37 +59,42 @@ class _MjpegViewerState extends State<MjpegViewer> {
     });
 
     try {
-      _httpClient = http.Client();
+      print('📹 Starting MJPEG stream: ${widget.streamUrl}');
+
       final request = http.Request('GET', Uri.parse(widget.streamUrl));
-      final response = await _httpClient!.send(request);
+      final client = http.Client();
+      final response = await client.send(request);
+
+      print('📡 Stream response: ${response.statusCode}');
 
       if (response.statusCode != 200) {
         throw Exception('Stream error: ${response.statusCode}');
       }
 
       List<int> buffer = [];
+      bool inFrame = false;
       int jpegStart = -1;
 
-      response.stream.listen(
+      _streamSubscription = response.stream.listen(
         (chunk) {
           if (_isDisposed) return;
 
           buffer.addAll(chunk);
 
-          // Find JPEG boundaries
-          // JPEG starts with 0xFFD8 and ends with 0xFFD9
+          // Process buffer to find JPEG frames
           while (buffer.length > 2) {
-            // Look for JPEG start marker
-            if (jpegStart == -1) {
+            if (!inFrame) {
+              // Look for JPEG start marker (0xFFD8)
               for (int i = 0; i < buffer.length - 1; i++) {
                 if (buffer[i] == 0xFF && buffer[i + 1] == 0xD8) {
                   jpegStart = i;
+                  inFrame = true;
                   break;
                 }
               }
 
-              if (jpegStart == -1) {
-                // No start marker found, clear buffer except last byte
+              if (!inFrame) {
+                // No start marker found, keep last byte
                 if (buffer.length > 1) {
                   buffer = [buffer.last];
                 }
@@ -96,8 +102,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
               }
             }
 
-            // Look for JPEG end marker
-            if (jpegStart != -1) {
+            if (inFrame) {
+              // Look for JPEG end marker (0xFFD9)
               for (int i = jpegStart + 2; i < buffer.length - 1; i++) {
                 if (buffer[i] == 0xFF && buffer[i + 1] == 0xD9) {
                   // Found complete JPEG frame
@@ -111,33 +117,33 @@ class _MjpegViewerState extends State<MjpegViewer> {
                       _isLoading = false;
                     });
 
-                    // Notify parent
+                    // Notify parent about new frame
                     widget.onFrameReceived?.call();
                   }
 
-                  // Remove processed frame from buffer
+                  // Remove processed data
                   buffer.removeRange(0, i + 2);
+                  inFrame = false;
                   jpegStart = -1;
                   break;
                 }
               }
 
-              // Prevent buffer from growing too large
-              if (buffer.length > 1024 * 1024) {
-                // 1MB limit
-                print('⚠️ Buffer overflow, clearing...');
+              // Prevent buffer overflow
+              if (buffer.length > 2 * 1024 * 1024) {
+                // 2MB limit
+                print('⚠️ Buffer overflow, resetting...');
                 buffer.clear();
+                inFrame = false;
                 jpegStart = -1;
               }
-            }
 
-            // Break if we can't find more frames
-            if (jpegStart != -1 && buffer.length < 1024) {
               break; // Wait for more data
             }
           }
         },
         onError: (error) {
+          print('❌ Stream error: $error');
           if (!_isDisposed && mounted) {
             setState(() {
               _error = 'Stream error: $error';
@@ -146,6 +152,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
           }
         },
         onDone: () {
+          print('🔚 Stream ended');
           if (!_isDisposed && mounted) {
             setState(() {
               _error = 'Stream ended';
@@ -156,6 +163,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
         cancelOnError: true,
       );
     } catch (e) {
+      print('❌ Connection error: $e');
       if (!_isDisposed && mounted) {
         setState(() {
           _error = 'Connection error: $e';
@@ -166,8 +174,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
   }
 
   void _stopStream() {
-    _httpClient?.close();
-    _httpClient = null;
+    _streamSubscription?.cancel();
+    _streamSubscription = null;
   }
 
   void _retry() {
@@ -186,9 +194,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             const SizedBox(height: 16),
             Text(
               'Loading camera stream...',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: Colors.white,
-              ),
+              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
             ),
           ],
         ),
@@ -200,26 +206,18 @@ class _MjpegViewerState extends State<MjpegViewer> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            const Icon(
-              Icons.error_outline,
-              size: 64,
-              color: AppColors.error,
-            ),
+            const Icon(Icons.error_outline, size: 64, color: AppColors.error),
             const SizedBox(height: 16),
             Text(
               'Stream Error',
-              style: AppTextStyles.headlineSmall.copyWith(
-                color: Colors.white,
-              ),
+              style: AppTextStyles.headlineSmall.copyWith(color: Colors.white),
             ),
             const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.symmetric(horizontal: 32),
               child: Text(
                 _error!,
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white70,
-                ),
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
                 textAlign: TextAlign.center,
               ),
             ),
@@ -231,10 +229,8 @@ class _MjpegViewerState extends State<MjpegViewer> {
               style: ElevatedButton.styleFrom(
                 backgroundColor: AppColors.primary,
                 foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 24,
-                  vertical: 12,
-                ),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
               ),
             ),
           ],
@@ -251,9 +247,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
             const SizedBox(height: 16),
             Text(
               'Waiting for frames...',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: Colors.white,
-              ),
+              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
             ),
           ],
         ),
@@ -263,7 +257,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
     return Image.memory(
       _currentFrame!,
       fit: widget.fit,
-      gaplessPlayback: true, // Smooth frame transitions
+      gaplessPlayback: true,
       errorBuilder: (context, error, stackTrace) {
         return Center(
           child: Column(
@@ -273,9 +267,7 @@ class _MjpegViewerState extends State<MjpegViewer> {
               const SizedBox(height: 16),
               Text(
                 'Failed to decode frame',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white,
-                ),
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
               ),
             ],
           ),
