@@ -5,6 +5,8 @@
 <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
 <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
 <uses-permission android:name="android.permission.VIBRATE" /> 
+<uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+<uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
 <queries>
         <!-- For opening email apps -->
         <intent>
@@ -26,6 +28,7 @@
     </queries>
 
     <application
+        android:usesCleartextTraffic="true"
         android:label="road_safe_ai"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">

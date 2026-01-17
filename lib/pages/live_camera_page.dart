@@ -1,12 +1,14 @@
-import 'dart:async';
-import '../services/drowsiness_service.dart';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
+import 'package:flutter/services.dart';
+import 'dart:async';
+import 'dart:typed_data';
+import '../services/camera_service.dart';
+import '../services/drowsiness_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
-import '../services/camera_service.dart';
-import '../widgets/glass_card.dart';
 import '../widgets/mjpeg_viewer.dart';
+import '../widgets/glass_card.dart';
+import 'device_setup_page.dart';
 
 class LiveCameraPage extends StatefulWidget {
   const LiveCameraPage({super.key});
@@ -17,795 +19,910 @@ class LiveCameraPage extends StatefulWidget {
 
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
-  Timer? _connectionWatchdog;
-  String? _lastConnectedIP;
-
   final CameraService _cameraService = CameraService();
 
-  late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
-
-  bool _isDrowsinessDetectionEnabled = false;
-  DrowsinessResult? _lastDetectionResult;
-  bool _isScanning = false;
+  bool _isConnected = false;
   bool _isConnecting = false;
-  List<ESP32Device> _discoveredDevices = [];
-  bool _isAPITested = false;
+  bool _isMonitoring = false;
+  String? _currentDeviceIP;
+
+  // Detection state
+  Timer? _detectionTimer;
+  DrowsinessResult? _lastDetection;
+  int _detectionCount = 0;
+  int _alertCount = 0;
+  DateTime? _sessionStartTime;
+
+  // FPS calculation
+  int _frameCount = 0;
+  double _currentFPS = 0.0;
+  Timer? _fpsTimer;
+
+  // Alert state
+  bool _isAlerting = false;
+  int _consecutiveClosedFrames = 0;
+
+  // Animation controllers
+  late AnimationController _pulseController;
+  late Animation<double> _pulseAnimation;
+  late AnimationController _alertController;
+  late Animation<double> _alertAnimation;
 
   @override
   void initState() {
     super.initState();
-
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-
-    _fadeAnimation = Tween<double>(
-      begin: 0,
-      end: 1,
-    ).animate(CurvedAnimation(
-      parent: _animationController,
-      curve: Curves.easeOut,
-    ));
-
-    _animationController.forward();
-
-    _cameraService.devicesStream.listen((devices) {
-      if (mounted) {
-        setState(() {
-          _discoveredDevices = devices;
-          _isScanning = false;
-        });
-      }
-    });
-
-    _cameraService.connectionStream.listen((isConnected) {
-      if (mounted) {
-        setState(() {
-          _isConnecting = false;
-        });
-
-        if (isConnected) {
-          _showMessage(
-              'Connected to ESP32-CAM successfully!', AppColors.success);
-          _testAPIConnection();
-        }
-      }
-    });
-
-    _startScanning();
+    _initializeAnimations();
+    _checkConnection();
+    _startFPSCounter();
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
-    _connectionWatchdog?.cancel();
+    _stopMonitoring();
+    _detectionTimer?.cancel();
+    _fpsTimer?.cancel();
+    _pulseController.dispose();
+    _alertController.dispose();
     super.dispose();
   }
 
-  Future<void> _testAPIConnection() async {
-    if (_isAPITested) return;
+  void _initializeAnimations() {
+    // Pulse animation for recording indicator
+    _pulseController = AnimationController(
+      duration: const Duration(milliseconds: 1000),
+      vsync: this,
+    )..repeat(reverse: true);
 
-    setState(() {
-      _isAPITested = true;
-    });
+    _pulseAnimation = Tween<double>(
+      begin: 0.8,
+      end: 1.2,
+    ).animate(CurvedAnimation(
+      parent: _pulseController,
+      curve: Curves.easeInOut,
+    ));
 
-    _showMessage('Testing Roboflow API connection...', AppColors.info);
+    // Alert animation
+    _alertController = AnimationController(
+      duration: const Duration(milliseconds: 500),
+      vsync: this,
+    );
 
-    final isAPIWorking = await DrowsinessDetector.testAPIConnection();
-
-    if (isAPIWorking) {
-      _showMessage('Roboflow API connected successfully!', AppColors.success);
-    } else {
-      _showMessage(
-          'Warning: Roboflow API connection failed. Check your API key.',
-          AppColors.error);
-    }
+    _alertAnimation = Tween<double>(
+      begin: 0.0,
+      end: 1.0,
+    ).animate(CurvedAnimation(
+      parent: _alertController,
+      curve: Curves.elasticOut,
+    ));
   }
 
-  void _startConnectionWatchdog() {
-    _connectionWatchdog?.cancel();
+  // ============================================
+  // CONNECTION MANAGEMENT
+  // ============================================
 
-    _connectionWatchdog = Timer.periodic(Duration(seconds: 30), (timer) async {
-      if (_cameraService.isConnected) {
-        try {
-          final response = await http
-              .head(
-                Uri.parse(
-                    'http://${_cameraService.connectedDevice?.ipAddress}/'),
-              )
-              .timeout(Duration(seconds: 3));
-
-          if (response.statusCode != 200) {
-            throw Exception('Device not responding');
-          }
-        } catch (e) {
-          if (mounted) {
-            print('Connection check failed: $e');
-            _showMessage('Connection check failed', AppColors.warning);
-          }
-        }
-      }
-    });
-  }
-
-  void _onDrowsinessDetected(DrowsinessResult result) {
-    setState(() {
-      _lastDetectionResult = result;
-    });
-
-    _showMessage(
-        'DROWSINESS DETECTED! Eyes closed for 1+ second. Phone is vibrating.',
-        AppColors.error);
-
-    final drowsyBoxes =
-        result.detectionBoxes.where((box) => box.isDrowsy).toList();
-    if (drowsyBoxes.isNotEmpty) {
-      final reasons = drowsyBoxes.map((box) => box.className).join(', ');
-      _showMessage(
-          'Detected: $reasons (Eyes: ${result.eyeOpenPercentage.toStringAsFixed(0)}%)',
-          AppColors.warning);
-    }
-  }
-
-  Future<void> _startScanning() async {
-    setState(() {
-      _isScanning = true;
-      _discoveredDevices.clear();
-    });
-
-    final knownDevices = await _cameraService.scanKnownESP32();
-
-    if (knownDevices.isNotEmpty) {
-      setState(() {
-        _discoveredDevices = knownDevices;
-        _isScanning = false;
-      });
-      _showMessage('Found your ESP32-CAM!', AppColors.success);
-      return;
-    }
-
-    await _cameraService.scanForDevices();
-
-    setState(() {
-      _isScanning = false;
-    });
-
-    if (_discoveredDevices.isEmpty) {
-      _showMessage('ESP32-CAM not found. Try Quick Connect or Manual IP.',
-          AppColors.warning);
-    }
-  }
-
-  Future<void> _connectToDevice(ESP32Device device) async {
+  Future<void> _checkConnection() async {
     setState(() {
       _isConnecting = true;
     });
 
-    final success = await _cameraService.connectToDevice(device);
+    try {
+      // Try quick connect with cached IP
+      bool connected = await _cameraService.quickConnect();
 
-    if (success) {
-      _lastConnectedIP = device.ipAddress;
-      _startConnectionWatchdog();
-    } else {
-      _showMessage(
-          'Failed to connect to ${device.deviceName}', AppColors.error);
+      if (connected) {
+        setState(() {
+          _isConnected = true;
+          _currentDeviceIP = _cameraService.connectedDevice?.ipAddress;
+        });
+        _showMessage('Connected to ESP32-CAM', AppColors.success);
+      } else {
+        // Try scanning for devices
+        await _scanForDevices();
+      }
+    } catch (e) {
+      print('Connection check error: $e');
+    } finally {
+      setState(() {
+        _isConnecting = false;
+      });
     }
   }
 
-  void _showMessage(String message, Color color) {
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            message,
-            style: AppTextStyles.bodyMedium.copyWith(color: Colors.white),
-          ),
-          backgroundColor: color,
-          behavior: SnackBarBehavior.floating,
-          shape:
-              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-          margin: const EdgeInsets.all(16),
-          duration: Duration(seconds: message.contains('DROWSINESS') ? 5 : 3),
+  Future<void> _scanForDevices() async {
+    setState(() {
+      _isConnecting = true;
+    });
+
+    try {
+      final devices = await _cameraService.scanForDevices();
+
+      if (devices.isNotEmpty) {
+        // Auto-connect to first device
+        bool connected = await _cameraService.connectToDevice(devices.first);
+
+        if (connected) {
+          setState(() {
+            _isConnected = true;
+            _currentDeviceIP = devices.first.ipAddress;
+          });
+          _showMessage('Connected to ESP32-CAM', AppColors.success);
+        }
+      } else {
+        _showMessage('No devices found', AppColors.warning);
+      }
+    } catch (e) {
+      _showMessage('Scan failed: ${e.toString()}', AppColors.error);
+    } finally {
+      setState(() {
+        _isConnecting = false;
+      });
+    }
+  }
+
+  void _disconnect() {
+    _stopMonitoring();
+    _cameraService.disconnect();
+    setState(() {
+      _isConnected = false;
+      _currentDeviceIP = null;
+    });
+    _showMessage('Disconnected', AppColors.info);
+  }
+
+  // ============================================
+  // DROWSINESS DETECTION
+  // ============================================
+
+  void _startMonitoring() {
+    if (!_isConnected) {
+      _showMessage('Please connect to ESP32-CAM first', AppColors.warning);
+      return;
+    }
+
+    setState(() {
+      _isMonitoring = true;
+      _sessionStartTime = DateTime.now();
+      _alertCount = 0;
+      _detectionCount = 0;
+      _consecutiveClosedFrames = 0;
+    });
+
+    _showMessage('Monitoring started', AppColors.success);
+
+    // Start detection loop (every 1.5 seconds)
+    _detectionTimer = Timer.periodic(
+      const Duration(milliseconds: 1500),
+      (timer) => _performDetection(),
+    );
+  }
+
+  void _stopMonitoring() {
+    _detectionTimer?.cancel();
+    setState(() {
+      _isMonitoring = false;
+      _sessionStartTime = null;
+    });
+
+    if (_detectionCount > 0) {
+      _showSessionSummary();
+    }
+  }
+
+  Future<void> _performDetection() async {
+    if (!_isConnected || !_isMonitoring) return;
+
+    try {
+      // Capture current frame
+      final frameBytes = await _captureCurrentFrame();
+      if (frameBytes == null) return;
+
+      // Analyze with Roboflow API
+      final result = await DrowsinessDetector.analyzeImage(frameBytes);
+
+      if (result != null) {
+        setState(() {
+          _lastDetection = result;
+          _detectionCount++;
+        });
+
+        // Check for drowsiness
+        if (result.isDrowsy) {
+          _consecutiveClosedFrames++;
+
+          // Trigger alert if eyes closed for 3+ frames (>1.5 seconds)
+          if (_consecutiveClosedFrames >= 2) {
+            await _triggerDrowsinessAlert();
+          }
+        } else {
+          _consecutiveClosedFrames = 0;
+        }
+      }
+    } catch (e) {
+      print('Detection error: $e');
+    }
+  }
+
+  Future<Uint8List?> _captureCurrentFrame() async {
+    // This method should capture the current frame from MJPEG stream
+    // For now, we'll return null - implement based on your MJPEG viewer
+    // You may need to add a method to MjpegViewer to get current frame
+    return null;
+  }
+
+  Future<void> _triggerDrowsinessAlert() async {
+    if (_isAlerting) return; // Prevent multiple simultaneous alerts
+
+    setState(() {
+      _isAlerting = true;
+      _alertCount++;
+    });
+
+    // Animate alert indicator
+    _alertController.forward().then((_) {
+      _alertController.reverse();
+    });
+
+    // Trigger vibration patterns
+    try {
+      await DrowsinessDetector.triggerDrowsinessAlert();
+    } catch (e) {
+      print('Alert error: $e');
+    }
+
+    // Show on-screen alert
+    _showAlertDialog();
+
+    // Reset alert state after 5 seconds
+    await Future.delayed(const Duration(seconds: 5));
+    setState(() {
+      _isAlerting = false;
+      _consecutiveClosedFrames = 0;
+    });
+  }
+
+  void _showAlertDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        backgroundColor: AppColors.error,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(20),
         ),
-      );
-    }
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(
+              Icons.warning_rounded,
+              color: Colors.white,
+              size: 80,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              'DROWSINESS DETECTED!',
+              style: AppTextStyles.headlineMedium.copyWith(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Please take a break or pull over safely',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: Colors.white70,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.white,
+                foregroundColor: AppColors.error,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 12,
+                ),
+              ),
+              child: const Text('I\'m Awake'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
-  void _showManualIPDialog() {
-    final TextEditingController ipController = TextEditingController();
+  void _showSessionSummary() {
+    final duration = DateTime.now().difference(_sessionStartTime!);
+    final minutes = duration.inMinutes;
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(16),
-        ),
-        title: Text(
-          'Manual IP Entry',
-          style: AppTextStyles.titleLarge.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
+        title: Text('Session Summary', style: AppTextStyles.headlineMedium),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Enter your ESP32-CAM IP address:',
-              style: AppTextStyles.bodyMedium,
-            ),
-            const SizedBox(height: 16),
-
-            // VIBRATION TEST BUTTON
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.error.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.error),
-              ),
-              child: Column(
-                children: [
-                  Text(
-                    'Test Vibration Hardware',
-                    style: AppTextStyles.titleMedium.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  ElevatedButton.icon(
-                    onPressed: () async {
-                      _showMessage('Testing vibration...', AppColors.info);
-                      print('');
-                      print('===== MANUAL VIBRATION TEST =====');
-                      await DrowsinessDetector.triggerDrowsinessAlert();
-                      print('===== TEST COMPLETE =====');
-                      print('');
-                      _showMessage('Did you feel vibration? Check console.',
-                          AppColors.warning);
-                    },
-                    icon: Icon(Icons.vibration),
-                    label: Text('VIBRATE NOW'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: AppColors.error,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(
-                          vertical: 12, horizontal: 24),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-            TextField(
-              controller: ipController,
-              keyboardType:
-                  const TextInputType.numberWithOptions(decimal: true),
-              decoration: InputDecoration(
-                hintText: 'e.g., 10.19.80.42',
-                prefixIcon: const Icon(Icons.router_rounded),
-                border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(12),
-                  borderSide: BorderSide(color: AppColors.primary, width: 2),
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Text(
-              'You can find the IP address in your ESP32 serial monitor or router admin panel.',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textSecondary,
-              ),
+            _buildSummaryRow('Duration', '$minutes minutes'),
+            _buildSummaryRow('Detections', '$_detectionCount'),
+            _buildSummaryRow('Alerts', '$_alertCount'),
+            _buildSummaryRow(
+              'Status',
+              _alertCount == 0
+                  ? 'Excellent'
+                  : _alertCount < 3
+                      ? 'Good'
+                      : 'Needs Rest',
             ),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: Text(
-              'Cancel',
-              style: AppTextStyles.labelLarge.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
-          ),
-          ElevatedButton(
-            onPressed: () async {
-              Navigator.pop(context);
-              final ip = ipController.text.trim();
-              if (ip.isNotEmpty) {
-                final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
-                if (ipRegex.hasMatch(ip)) {
-                  final device = ESP32Device(
-                    ipAddress: ip,
-                    deviceName: 'ESP32-CAM ($ip)',
-                    isConnected: false,
-                  );
-                  await _connectToDevice(device);
-                } else {
-                  _showMessage('Invalid IP address format', AppColors.error);
-                }
-              }
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text('Connect'),
+            child: const Text('Close'),
           ),
         ],
       ),
     );
   }
+
+  Widget _buildSummaryRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: AppTextStyles.bodyMedium),
+          Text(
+            value,
+            style: AppTextStyles.titleMedium.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ============================================
+  // FPS COUNTER
+  // ============================================
+
+  void _startFPSCounter() {
+    _fpsTimer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      setState(() {
+        _currentFPS = _frameCount.toDouble();
+        _frameCount = 0;
+      });
+    });
+  }
+
+  void _onFrameReceived() {
+    _frameCount++;
+  }
+
+  // ============================================
+  // UI HELPERS
+  // ============================================
+
+  void _showMessage(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+        ),
+        margin: const EdgeInsets.all(16),
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
+
+  // ============================================
+  // BUILD UI
+  // ============================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        flexibleSpace: Container(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              colors: AppColors.primaryGradient,
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+      appBar: _buildAppBar(),
+      body: SafeArea(
+        child: Column(
+          children: [
+            // Status Bar
+            _buildStatusBar(),
+
+            // Camera Feed
+            Expanded(
+              child: _buildCameraFeed(),
             ),
-          ),
+
+            // Detection Info
+            if (_isMonitoring) _buildDetectionInfo(),
+
+            // Control Panel
+            _buildControlPanel(),
+          ],
         ),
-        title: Text(
-          'Live Camera Feed',
-          style: AppTextStyles.headlineMedium.copyWith(
-            color: Colors.white,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        leading: IconButton(
-          onPressed: () => Navigator.pop(context),
-          icon: const Icon(
-            Icons.arrow_back_ios_new_rounded,
-            color: Colors.white,
-            size: 20,
-          ),
-        ),
-        actions: [
-          IconButton(
-            onPressed: () => _showDebugInfo(),
-            icon: const Icon(
-              Icons.bug_report,
-              color: Colors.white,
-              size: 20,
-            ),
-          ),
-        ],
-      ),
-      body: AnimatedBuilder(
-        animation: _animationController,
-        builder: (context, child) {
-          return Opacity(
-            opacity: _fadeAnimation.value,
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildConnectionStatus(),
-                  const SizedBox(height: 24),
-                  if (_cameraService.isConnected)
-                    _buildCameraFeed()
-                  else
-                    _buildDeviceDiscovery(),
-                  const SizedBox(height: 32),
-                ],
-              ),
-            ),
-          );
-        },
       ),
     );
   }
 
-  void _showDebugInfo() {
-    showDialog(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: Text('Debug Information'),
-        content: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Camera Status:', style: AppTextStyles.titleMedium),
-              Text('Connected: ${_cameraService.isConnected}'),
-              Text(
-                  'Device IP: ${_cameraService.connectedDevice?.ipAddress ?? "None"}'),
-              Text('Stream URL: ${_cameraService.streamUrl}'),
-              SizedBox(height: 16),
-              Text('AI Detection:', style: AppTextStyles.titleMedium),
-              Text('Enabled: $_isDrowsinessDetectionEnabled'),
-              Text('API Tested: $_isAPITested'),
-              Text(
-                  'Last Result: ${_lastDetectionResult?.totalPredictions ?? 0} predictions'),
-              if (_lastDetectionResult != null) ...[
-                Text(
-                    'Eye Opening: ${_lastDetectionResult!.eyeOpenPercentage.toStringAsFixed(1)}%'),
-                Text(
-                    'Detection Boxes: ${_lastDetectionResult!.detectionBoxes.length}'),
-                for (var box in _lastDetectionResult!.detectionBoxes)
-                  Text(
-                      '  - ${box.className}: ${(box.confidence * 100).toInt()}%'),
-              ],
-              SizedBox(height: 16),
-              Text('Tests:', style: AppTextStyles.titleMedium),
-              SizedBox(height: 8),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  _showMessage('Testing vibration...', AppColors.info);
-                  await DrowsinessDetector.testVibration();
-                  _showMessage('Vibration test complete! Check console logs.',
-                      AppColors.success);
-                },
-                icon: Icon(Icons.vibration),
-                label: Text('Test Vibration'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.error,
-                ),
-              ),
-              SizedBox(height: 8),
-              ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await _testAPIConnection();
-                },
-                icon: Icon(Icons.cloud),
-                label: Text('Test API Connection'),
-              ),
-            ],
-          ),
+  PreferredSizeWidget _buildAppBar() {
+    return AppBar(
+      title: Text('Live Camera Feed', style: AppTextStyles.headlineMedium),
+      backgroundColor: AppColors.primary,
+      foregroundColor: Colors.white,
+      actions: [
+        // Settings button
+        IconButton(
+          icon: const Icon(Icons.settings),
+          onPressed: () {
+            // Navigate to settings
+          },
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: Text('Close'),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
-  Widget _buildConnectionStatus() {
-    final isConnected = _cameraService.isConnected;
-    final device = _cameraService.connectedDevice;
-
-    return GlassCard(
-      padding: const EdgeInsets.all(20),
-      borderRadius: 20,
-      child: Column(
+  Widget _buildStatusBar() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: _isConnected
+          ? AppColors.success.withOpacity(0.1)
+          : AppColors.warning.withOpacity(0.1),
+      child: Row(
         children: [
-          Row(
-            children: [
-              Container(
-                width: 48,
-                height: 48,
-                decoration: BoxDecoration(
-                  color: (isConnected ? AppColors.success : AppColors.warning)
-                      .withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(14),
-                ),
-                child: Icon(
-                  isConnected
-                      ? Icons.videocam_rounded
-                      : Icons.videocam_off_rounded,
-                  color: isConnected ? AppColors.success : AppColors.warning,
-                  size: 24,
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      isConnected ? 'Camera Connected' : 'Camera Disconnected',
-                      style: AppTextStyles.titleMedium.copyWith(
-                        color:
-                            isConnected ? AppColors.success : AppColors.warning,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    Text(
-                      isConnected
-                          ? 'IP: ${device?.ipAddress ?? 'Unknown'}'
-                          : 'Check ESP32 power (use 5V 2A) and WiFi',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (isConnected)
-                IconButton(
-                  onPressed: () {
-                    _cameraService.disconnect();
-                    setState(() {
-                      _isAPITested = false;
-                    });
-                  },
-                  icon: Icon(
-                    Icons.close_rounded,
-                    color: AppColors.error,
+          // Connection Status
+          Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: _isConnected ? AppColors.success : AppColors.warning,
+              shape: BoxShape.circle,
+              boxShadow: [
+                if (_isConnected)
+                  BoxShadow(
+                    color: AppColors.success.withOpacity(0.5),
+                    blurRadius: 8,
+                    spreadRadius: 2,
+                  ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  _isConnected
+                      ? 'Connected'
+                      : _isConnecting
+                          ? 'Connecting...'
+                          : 'Disconnected',
+                  style: AppTextStyles.labelLarge.copyWith(
+                    color: _isConnected ? AppColors.success : AppColors.warning,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
-            ],
+                if (_currentDeviceIP != null)
+                  Text(
+                    'IP: $_currentDeviceIP',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+              ],
+            ),
           ),
-          if (isConnected) ...[
-            const SizedBox(height: 12),
+
+          // FPS Counter
+          if (_isConnected)
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
               decoration: BoxDecoration(
-                color: (_isAPITested ? AppColors.success : AppColors.warning)
-                    .withOpacity(0.1),
+                color: AppColors.surface,
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(
-                  color: _isAPITested ? AppColors.success : AppColors.warning,
-                  width: 1,
-                ),
               ),
               child: Row(
                 children: [
-                  Icon(
-                    _isAPITested ? Icons.cloud_done : Icons.cloud_off,
-                    color: _isAPITested ? AppColors.success : AppColors.warning,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 8),
+                  const Icon(Icons.speed, size: 16, color: AppColors.primary),
+                  const SizedBox(width: 4),
                   Text(
-                    _isAPITested
-                        ? 'Roboflow API Ready'
-                        : 'Testing API Connection...',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color:
-                          _isAPITested ? AppColors.success : AppColors.warning,
+                    '${_currentFPS.toStringAsFixed(0)} FPS',
+                    style: AppTextStyles.labelMedium.copyWith(
                       fontWeight: FontWeight.w600,
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Colors.orange.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: Colors.orange, width: 1),
-              ),
-              child: Row(
-                children: [
-                  Icon(Icons.warning_amber, color: Colors.orange, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'If feed freezes: Check ESP32 power supply (5V 2A adapter required)',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: Colors.orange,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
         ],
       ),
     );
   }
 
   Widget _buildCameraFeed() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+    if (_isConnecting) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
+            const CircularProgressIndicator(),
+            const SizedBox(height: 16),
             Text(
-              'Live Feed',
-              style: AppTextStyles.headlineSmall.copyWith(
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-            Row(
-              children: [
-                Icon(
-                  Icons.psychology_rounded,
-                  color: _isDrowsinessDetectionEnabled
-                      ? AppColors.success
-                      : AppColors.textHint,
-                  size: 20,
-                ),
-                const SizedBox(width: 8),
-                Switch(
-                  value: _isDrowsinessDetectionEnabled,
-                  onChanged: (value) {
-                    setState(() {
-                      _isDrowsinessDetectionEnabled = value;
-                    });
-
-                    _showMessage(
-                      value
-                          ? 'AI Drowsiness Detection Enabled - Close eyes for 1s to trigger'
-                          : 'AI Drowsiness Detection Disabled',
-                      value ? AppColors.success : AppColors.warning,
-                    );
-                  },
-                  activeColor: AppColors.success,
-                ),
-              ],
+              'Connecting to ESP32-CAM...',
+              style: AppTextStyles.bodyLarge,
             ),
           ],
         ),
-        const SizedBox(height: 16),
+      );
+    }
+
+    if (!_isConnected) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(
+              Icons.videocam_off_rounded,
+              size: 80,
+              color: AppColors.textHint,
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Camera Disconnected',
+              style: AppTextStyles.headlineMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Scan for ESP32-CAM devices to connect',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textHint,
+              ),
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 32),
+            ElevatedButton.icon(
+              onPressed: _scanForDevices,
+              icon: const Icon(Icons.search),
+              label: const Text('Scan for Devices'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24,
+                  vertical: 12,
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextButton.icon(
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const DeviceSetupPage(),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.settings),
+              label: const Text('Device Setup'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Stack(
+      children: [
+        // MJPEG Stream
         Container(
-          width: double.infinity,
-          height: 400,
-          decoration: BoxDecoration(
-            color: Colors.black,
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-              color: AppColors.primary.withOpacity(0.3),
-              width: 2,
+          color: Colors.black,
+          child: Center(
+            child: MjpegViewer(
+              streamUrl: _cameraService.streamUrl,
+              fit: BoxFit.contain,
+              onFrameReceived: _onFrameReceived,
             ),
           ),
-          child: ClipRRect(
-            borderRadius: BorderRadius.circular(18),
-            child: MjpegViewer(
-              isLive: true,
-              enableDrowsinessDetection: _isDrowsinessDetectionEnabled,
-              onDrowsinessDetected: _onDrowsinessDetected,
-              stream: _cameraService.streamUrl,
-              error: (context, error, stack) {
-                return Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Icon(
-                        Icons.error_outline_rounded,
-                        color: AppColors.error,
-                        size: 48,
-                      ),
-                      const SizedBox(height: 16),
-                      Text(
-                        'Camera Feed Error',
-                        style: AppTextStyles.titleMedium.copyWith(
-                          color: Colors.white,
+        ),
+
+        // Detection Overlay
+        if (_lastDetection != null && _isMonitoring) _buildDetectionOverlay(),
+
+        // Recording Indicator
+        if (_isMonitoring)
+          Positioned(
+            top: 16,
+            left: 16,
+            child: AnimatedBuilder(
+              animation: _pulseAnimation,
+              builder: (context, child) {
+                return Transform.scale(
+                  scale: _pulseAnimation.value,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                    decoration: BoxDecoration(
+                      color: AppColors.error,
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: [
+                        BoxShadow(
+                          color: AppColors.error.withOpacity(0.5),
+                          blurRadius: 8,
+                          spreadRadius: 2,
                         ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        'Check camera connection',
-                        style: AppTextStyles.bodySmall.copyWith(
-                          color: Colors.white70,
+                      ],
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: const BoxDecoration(
+                            color: Colors.white,
+                            shape: BoxShape.circle,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          _cameraService.disconnect();
-                          setState(() {});
-                        },
-                        child: const Text('Reconnect'),
-                      ),
-                    ],
+                        const SizedBox(width: 8),
+                        Text(
+                          'MONITORING',
+                          style: AppTextStyles.labelSmall.copyWith(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 );
               },
             ),
           ),
-        ),
-        const SizedBox(height: 16),
-        if (_isDrowsinessDetectionEnabled && _lastDetectionResult != null)
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: _lastDetectionResult!.isDrowsy
-                  ? AppColors.error.withOpacity(0.1)
-                  : AppColors.success.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(
-                color: _lastDetectionResult!.isDrowsy
-                    ? AppColors.error
-                    : AppColors.success,
-                width: 1,
-              ),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      _lastDetectionResult!.isDrowsy
-                          ? Icons.warning
-                          : Icons.check_circle,
-                      color: _lastDetectionResult!.isDrowsy
-                          ? AppColors.error
-                          : AppColors.success,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      _lastDetectionResult!.isDrowsy
-                          ? 'DROWSINESS DETECTED (1+ second)'
-                          : 'Driver Alert',
-                      style: AppTextStyles.bodyMedium.copyWith(
-                        color: _lastDetectionResult!.isDrowsy
-                            ? AppColors.error
-                            : AppColors.success,
-                        fontWeight: FontWeight.w600,
+
+        // Alert Indicator
+        if (_isAlerting)
+          Positioned.fill(
+            child: AnimatedBuilder(
+              animation: _alertAnimation,
+              builder: (context, child) {
+                return Container(
+                  color: AppColors.error.withOpacity(
+                    0.3 * _alertAnimation.value,
+                  ),
+                  child: Center(
+                    child: Transform.scale(
+                      scale: _alertAnimation.value,
+                      child: Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          color: AppColors.error,
+                          borderRadius: BorderRadius.circular(20),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            const Icon(
+                              Icons.warning_rounded,
+                              color: Colors.white,
+                              size: 60,
+                            ),
+                            const SizedBox(height: 8),
+                            Text(
+                              'DROWSINESS\nDETECTED!',
+                              style: AppTextStyles.headlineMedium.copyWith(
+                                color: Colors.white,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              textAlign: TextAlign.center,
+                            ),
+                          ],
+                        ),
                       ),
                     ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  'Detections: ${_lastDetectionResult!.detectionBoxes.length}',
-                  style: AppTextStyles.bodySmall,
-                ),
-                if (_lastDetectionResult!.detectionBoxes.isNotEmpty) ...[
-                  const SizedBox(height: 4),
-                  Wrap(
-                    spacing: 8,
-                    children: _lastDetectionResult!.detectionBoxes.map((box) {
-                      return Container(
-                        padding:
-                            EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: box.isDrowsy
-                              ? AppColors.error.withOpacity(0.2)
-                              : AppColors.info.withOpacity(0.2),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Text(
-                          '${box.className} ${(box.confidence * 100).toInt()}%',
-                          style: AppTextStyles.bodySmall.copyWith(
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                      );
-                    }).toList(),
                   ),
-                ],
-              ],
+                );
+              },
             ),
           ),
-        const SizedBox(height: 16),
-        Row(
+      ],
+    );
+  }
+
+  Widget _buildDetectionOverlay() {
+    return Positioned(
+      bottom: 16,
+      left: 16,
+      right: 16,
+      child: GlassCard(
+        padding: const EdgeInsets.all(16),
+        child: Column(
           children: [
+            // Eye Opening Percentage
+            Row(
+              children: [
+                const Icon(Icons.remove_red_eye, size: 20, color: Colors.white),
+                const SizedBox(width: 8),
+                Text(
+                  'Eye Opening: ${_lastDetection!.eyeOpenPercentage.toStringAsFixed(0)}%',
+                  style: AppTextStyles.labelLarge.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: _lastDetection!.isDrowsy
+                        ? AppColors.error
+                        : AppColors.success,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Text(
+                    _lastDetection!.isDrowsy ? 'DROWSY' : 'ALERT',
+                    style: AppTextStyles.labelSmall.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            // Progress Bar
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: _lastDetection!.eyeOpenPercentage / 100,
+                backgroundColor: Colors.white.withOpacity(0.3),
+                valueColor: AlwaysStoppedAnimation<Color>(
+                  _lastDetection!.eyeOpenPercentage > 50
+                      ? AppColors.success
+                      : AppColors.error,
+                ),
+                minHeight: 8,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDetectionInfo() {
+    final duration = DateTime.now().difference(_sessionStartTime!);
+    final minutes = duration.inMinutes;
+    final seconds = duration.inSeconds % 60;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      color: AppColors.surface,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceAround,
+        children: [
+          _buildInfoItem(
+            icon: Icons.timer,
+            label: 'Duration',
+            value: '$minutes:${seconds.toString().padLeft(2, '0')}',
+          ),
+          Container(width: 1, height: 40, color: AppColors.surfaceVariant),
+          _buildInfoItem(
+            icon: Icons.visibility,
+            label: 'Detections',
+            value: '$_detectionCount',
+          ),
+          Container(width: 1, height: 40, color: AppColors.surfaceVariant),
+          _buildInfoItem(
+            icon: Icons.warning,
+            label: 'Alerts',
+            value: '$_alertCount',
+            valueColor: _alertCount > 0 ? AppColors.error : AppColors.success,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInfoItem({
+    required IconData icon,
+    required String label,
+    required String value,
+    Color? valueColor,
+  }) {
+    return Column(
+      children: [
+        Icon(icon, size: 20, color: AppColors.primary),
+        const SizedBox(height: 4),
+        Text(
+          label,
+          style: AppTextStyles.labelSmall.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+        Text(
+          value,
+          style: AppTextStyles.titleMedium.copyWith(
+            fontWeight: FontWeight.bold,
+            color: valueColor,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildControlPanel() {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        boxShadow: [
+          BoxShadow(
+            color: AppColors.cardShadow,
+            offset: const Offset(0, -2),
+            blurRadius: 8,
+          ),
+        ],
+      ),
+      child: Row(
+        children: [
+          // Scan Button
+          if (!_isConnected)
             Expanded(
               child: ElevatedButton.icon(
-                onPressed: () {
-                  _showMessage('Capture feature coming soon!', AppColors.info);
-                },
-                icon: const Icon(Icons.camera_rounded),
-                label: const Text('Capture'),
+                onPressed: _isConnecting ? null : _scanForDevices,
+                icon: _isConnecting
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.search),
+                label: Text(_isConnecting ? 'Scanning...' : 'Scan'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.secondary,
+                  backgroundColor: AppColors.primary,
                   foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ),
+
+          // Monitoring Controls
+          if (_isConnected) ...[
+            // Start/Stop Monitoring
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
+                icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
+                label: Text(
+                    _isMonitoring ? 'Stop Monitoring' : 'Start Monitoring'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor:
+                      _isMonitoring ? AppColors.error : AppColors.success,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -813,218 +930,18 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               ),
             ),
             const SizedBox(width: 12),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () {
-                  _cameraService.testConnection();
-                  _testAPIConnection();
-                },
-                icon: const Icon(Icons.refresh_rounded),
-                label: const Text('Test'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
+
+            // Disconnect Button
+            IconButton(
+              onPressed: _disconnect,
+              icon: const Icon(Icons.power_settings_new),
+              style: IconButton.styleFrom(
+                backgroundColor: AppColors.surfaceVariant,
+                foregroundColor: AppColors.error,
+                padding: const EdgeInsets.all(16),
               ),
             ),
           ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDeviceDiscovery() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          'Available Devices',
-          style: AppTextStyles.headlineSmall.copyWith(
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-        const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: () => _showManualIPDialog(),
-                icon: const Icon(Icons.edit_rounded, size: 18),
-                label: const Text('Manual IP'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.accent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isScanning ? null : _startScanning,
-                icon: _isScanning
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(Colors.white),
-                        ),
-                      )
-                    : const Icon(Icons.search_rounded, size: 18),
-                label: Text(_isScanning ? 'Scanning...' : 'Scan'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 12),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                ),
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 16),
-        if (_discoveredDevices.isEmpty && !_isScanning)
-          _buildEmptyState()
-        else if (_discoveredDevices.isNotEmpty)
-          Column(
-            children: _discoveredDevices
-                .map((device) => _buildDeviceCard(device))
-                .toList(),
-          )
-        else if (_isScanning)
-          _buildScanningState(),
-      ],
-    );
-  }
-
-  Widget _buildDeviceCard(ESP32Device device) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      child: GlassCard(
-        padding: const EdgeInsets.all(16),
-        borderRadius: 16,
-        child: Row(
-          children: [
-            Container(
-              width: 48,
-              height: 48,
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: AppColors.accentGradient,
-                ),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.camera_alt_rounded,
-                color: Colors.white,
-                size: 24,
-              ),
-            ),
-            const SizedBox(width: 16),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    device.deviceName,
-                    style: AppTextStyles.titleMedium.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  Text(
-                    'IP: ${device.ipAddress}',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: AppColors.textSecondary,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            ElevatedButton(
-              onPressed: _isConnecting ? null : () => _connectToDevice(device),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppColors.primary,
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-              ),
-              child: Text(
-                _isConnecting ? 'Connecting...' : 'Connect',
-                style: AppTextStyles.labelMedium.copyWith(
-                  color: Colors.white,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildEmptyState() {
-    return GlassCard(
-      padding: const EdgeInsets.all(32),
-      borderRadius: 20,
-      child: Column(
-        children: [
-          Icon(
-            Icons.camera_alt_outlined,
-            size: 64,
-            color: AppColors.textHint,
-          ),
-          const SizedBox(height: 16),
-          Text(
-            'No ESP32-CAM Devices Found',
-            style: AppTextStyles.titleMedium.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'Make sure your ESP32-CAM is powered on and connected to the same Wi-Fi network.',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildScanningState() {
-    return GlassCard(
-      padding: const EdgeInsets.all(32),
-      borderRadius: 20,
-      child: Column(
-        children: [
-          const CircularProgressIndicator(),
-          const SizedBox(height: 16),
-          Text(
-            'Scanning for Devices...',
-            style: AppTextStyles.titleMedium.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-          const SizedBox(height: 8),
-          Text(
-            'This may take a few seconds',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
         ],
       ),
     );
