@@ -30,6 +30,7 @@ dependencies:
   url_launcher: ^6.3.2
   wifi_iot: ^0.3.19+2
   shared_preferences: ^2.5.4
+  fl_chart: ^1.1.1
 
 dev_dependencies:
   flutter_test:
