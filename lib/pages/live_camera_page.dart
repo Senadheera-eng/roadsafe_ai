@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:road_safe_ai/services/data_service.dart';
 import 'dart:async';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 import '../services/camera_service.dart';
 import '../services/drowsiness_service.dart';
+import '../services/data_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/mjpeg_viewer.dart';
@@ -20,6 +20,7 @@ class LiveCameraPage extends StatefulWidget {
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
   final CameraService _cameraService = CameraService();
+  final DataService _dataService = DataService();
   final GlobalKey<MjpegViewerState> _mjpegKey = GlobalKey<MjpegViewerState>();
 
   bool _isConnected = false;
@@ -33,7 +34,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   int _detectionCount = 0;
   int _alertCount = 0;
   DateTime? _sessionStartTime;
-  String? _currentSessionId;
 
   // FPS calculation
   int _frameCount = 0;
@@ -49,9 +49,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   late Animation<double> _pulseAnimation;
   late AnimationController _alertController;
   late Animation<double> _alertAnimation;
-
-  // Image for detection overlay
-  ui.Image? _currentImage;
 
   @override
   void initState() {
@@ -173,7 +170,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   // DROWSINESS DETECTION
   // ============================================
 
-  // Update _startMonitoring
   void _startMonitoring() async {
     if (!_isConnected) {
       _showMessage('Please connect to ESP32-CAM first', AppColors.warning);
@@ -184,24 +180,15 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     print('🚀 STARTING MONITORING SESSION');
     print('========================================');
 
-    // Start Firebase session (with error handling)
+    // Start DataService session (with error handling)
     try {
-      // Check if DataService exists, if not, skip Firebase logging
-      try {
-        final dataService = DataService();
-        _currentSessionId = await dataService.startTrip();
-        print('✅ Session created: $_currentSessionId');
-      } catch (e) {
-        print('⚠️ Firebase session creation failed (continuing anyway): $e');
-        // Continue without Firebase - monitoring will still work
-        _currentSessionId = null;
-      }
+      await _dataService.startSession();
+      print('✅ DataService session started');
     } catch (e) {
-      print('⚠️ DataService not available: $e');
-      _currentSessionId = null;
+      print('⚠️ DataService session failed (continuing anyway): $e');
+      // Continue without Firebase - monitoring will still work
     }
 
-    // Update state (this should always work)
     setState(() {
       _isMonitoring = true;
       _sessionStartTime = DateTime.now();
@@ -213,7 +200,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     _showMessage('Monitoring started', AppColors.success);
 
     print('Session details:');
-    print('   - Session ID: ${_currentSessionId ?? "None (offline mode)"}');
     print('   - Start time: $_sessionStartTime');
     print('   - Device IP: $_currentDeviceIP');
     print('========================================\n');
@@ -223,28 +209,40 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       const Duration(milliseconds: 1500),
       (timer) => _performDetection(),
     );
-
-    print('✅ Detection timer started');
   }
 
-  void _stopMonitoring() {
-    _detectionTimer?.cancel();
-    DrowsinessDetector.stopContinuousVibration();
+  void _stopMonitoring() async {
+    print('\n========================================');
+    print('🛑 STOPPING MONITORING SESSION');
+    print('========================================');
 
-    // End session
-    if (_currentSessionId != null && _sessionStartTime != null) {
-      final duration = DateTime.now().difference(_sessionStartTime!);
-      final dataService = DataService();
-      dataService.endTrip(_currentSessionId!, duration.inMinutes);
+    _detectionTimer?.cancel();
+
+    // Stop vibration if active
+    if (DrowsinessDetector.isVibrating) {
+      print('Stopping active vibration...');
+      await DrowsinessDetector.stopContinuousVibration();
+    }
+
+    // End DataService session (with error handling)
+    if (_dataService.hasActiveSession) {
+      try {
+        await _dataService.endSession();
+        print('✅ DataService session ended and saved');
+      } catch (e) {
+        print('⚠️ Failed to end session (continuing): $e');
+      }
     }
 
     setState(() {
       _isMonitoring = false;
       _sessionStartTime = null;
       _lastDetection = null;
-      _currentSessionId = null;
     });
 
+    print('========================================\n');
+
+    // Show session summary
     if (_detectionCount > 0) {
       _showSessionSummary();
     }
@@ -254,9 +252,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     if (!_isConnected || !_isMonitoring) return;
 
     try {
-      print('\n🔍 Starting detection cycle...');
-
-      // Get current frame from MJPEG viewer
       final currentFrame = _mjpegKey.currentState?.currentFrame;
 
       if (currentFrame == null) {
@@ -264,164 +259,109 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         return;
       }
 
-      print('📸 Frame captured: ${currentFrame.length} bytes');
+      print('📸 Capturing frame for detection (${currentFrame.length} bytes)');
 
-      // Show loading indicator on detection overlay (optional)
-      if (mounted) {
-        setState(() {
-          // You can add a loading state here if needed
-        });
-      }
-
-      // Analyze with Roboflow API
       final result = await DrowsinessDetector.analyzeImage(currentFrame);
 
       if (result != null) {
+        setState(() {
+          _lastDetection = result;
+          _detectionCount++;
+        });
+
         print('✅ Detection completed');
         print('   - Drowsy: ${result.isDrowsy}');
         print('   - Yawn: ${result.hasYawn}');
         print(
             '   - Eye Opening: ${result.eyeOpenPercentage.toStringAsFixed(1)}%');
-        print('   - Detections: ${result.detectionBoxes.length}');
-
-        // Update UI with detection result
-        if (mounted) {
-          setState(() {
-            _lastDetection = result;
-            _detectionCount++;
-          });
-        }
-
-        // Log detection to Firebase Analytics
-        if (_currentSessionId != null) {
-          try {
-            final dataService = DataService();
-            await dataService.incrementDetections(_currentSessionId!);
-            print('📊 Detection logged to Firebase');
-          } catch (e) {
-            print('⚠️ Failed to log detection: $e');
-          }
-        }
 
         // Check for drowsiness
         if (result.isDrowsy) {
           _consecutiveClosedFrames++;
-          print('⚠️ Drowsy state detected');
-          print('   Consecutive closed frames: $_consecutiveClosedFrames');
+          print(
+              '⚠️ Drowsy frame detected ($_consecutiveClosedFrames consecutive)');
 
           // Trigger alert if eyes closed for 2+ frames (>1.5 seconds)
           if (_consecutiveClosedFrames >= 2) {
             print('🚨 ALERT THRESHOLD REACHED! Triggering alert...');
             await _triggerDrowsinessAlert();
-          } else {
-            print('⏳ Waiting for more frames ($_consecutiveClosedFrames/2)');
           }
         } else {
-          // Eyes are open - reset counter
           if (_consecutiveClosedFrames > 0) {
-            print(
-                '✅ Eyes open - resetting counter (was $_consecutiveClosedFrames)');
+            print('✅ Eyes open - resetting counter');
           }
           _consecutiveClosedFrames = 0;
         }
-      } else {
-        print('❌ Detection failed - no result from API');
       }
-    } catch (e, stackTrace) {
+    } catch (e) {
       print('❌ Detection error: $e');
-      print('Stack trace: $stackTrace');
     }
   }
 
   Future<void> _triggerDrowsinessAlert() async {
-    // Prevent multiple simultaneous alerts
-    if (_isAlerting) {
-      print('⚠️ Alert already in progress, skipping...');
-      return;
-    }
+    if (_isAlerting) return;
 
-    print('\n========================================');
-    print('🚨 TRIGGERING DROWSINESS ALERT');
-    print('========================================');
-    print('Alert #${_alertCount + 1}');
-    print('Session ID: $_currentSessionId');
-    print('Consecutive closed frames: $_consecutiveClosedFrames');
-    print('Current detection: ${_lastDetection?.isDrowsy}');
-    print('Has yawn: ${_lastDetection?.hasYawn}');
-    print('========================================\n');
+    setState(() {
+      _isAlerting = true;
+      _alertCount++;
+    });
 
-    // Update alert state
-    if (mounted) {
-      setState(() {
-        _isAlerting = true;
-        _alertCount++;
-      });
-    }
+    print('🚨 Triggering drowsiness alert (Alert #$_alertCount)');
 
-    // Trigger alert animation
     _alertController.forward().then((_) {
       _alertController.reverse();
     });
 
-    // Log alert to Firebase Analytics
-    if (_currentSessionId != null) {
-      try {
-        final dataService = DataService();
-        final alertType = _lastDetection?.hasYawn == true ? 'yawn' : 'drowsy';
+    // Log alert to DataService (with error handling)
+    try {
+      final alertType =
+          _lastDetection?.hasYawn == true ? 'Yawn Detected' : 'Eyes Closed';
+      final alert = AlertEvent(
+        time: DateTime.now(),
+        type: alertType,
+        confidence: _lastDetection?.confidence,
+        details:
+            'Eye opening: ${_lastDetection?.eyeOpenPercentage.toStringAsFixed(1)}%',
+      );
 
-        await dataService.logAlert(_currentSessionId!, alertType);
-
-        print('📊 Alert logged to Firebase');
-        print('   - Type: $alertType');
-        print('   - Session: $_currentSessionId');
-        print('   - Total alerts: $_alertCount');
-      } catch (e) {
-        print('❌ Failed to log alert to Firebase: $e');
-      }
-    } else {
-      print('⚠️ No active session - alert not logged');
+      await _dataService.addAlertToActiveSession(alert);
+      print('📊 Alert logged to DataService');
+    } catch (e) {
+      print('⚠️ Failed to log alert (continuing): $e');
     }
 
     // Start continuous vibration
     try {
-      print('📳 Starting continuous vibration...');
       await DrowsinessDetector.startContinuousVibration();
-      print('✅ Vibration started successfully');
     } catch (e) {
       print('❌ Vibration error: $e');
     }
 
-    // Show alert dialog (vibration continues until dismissed)
+    // Show alert dialog
     if (mounted) {
       _showAlertDialog();
     }
-
-    print('🚨 Alert trigger complete\n');
   }
 
   void _showAlertDialog() {
-    print('📱 Showing alert dialog to user...');
-
     showDialog(
       context: context,
-      barrierDismissible: false, // Cannot dismiss by tapping outside
+      barrierDismissible: false,
       builder: (context) => WillPopScope(
-        onWillPop: () async => false, // Prevent back button dismissal
+        onWillPop: () async => false,
         child: AlertDialog(
           backgroundColor: AppColors.error,
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(20),
-          ),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Animated warning icon
               TweenAnimationBuilder<double>(
                 tween: Tween(begin: 0.0, end: 1.0),
                 duration: const Duration(milliseconds: 500),
                 builder: (context, value, child) {
                   return Transform.scale(
-                    scale: 0.8 + (value * 0.4), // Pulse from 0.8 to 1.2
+                    scale: 0.8 + (value * 0.4),
                     child: const Icon(
                       Icons.warning_rounded,
                       color: Colors.white,
@@ -429,14 +369,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     ),
                   );
                 },
-                onEnd: () {
-                  // Repeat animation
-                  setState(() {});
-                },
               ),
               const SizedBox(height: 16),
-
-              // Alert title
               Text(
                 'DROWSINESS DETECTED!',
                 style: AppTextStyles.headlineMedium.copyWith(
@@ -446,20 +380,14 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 8),
-
-              // Alert message (different for yawn vs drowsy)
               Text(
                 _lastDetection?.hasYawn == true
                     ? 'Yawning detected - Take a break!'
                     : 'Eyes closed for too long - Pull over safely!',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.white70,
-                ),
+                style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-
-              // Vibration indicator
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -483,8 +411,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
               ),
               const SizedBox(height: 8),
-
-              // Alert count badge
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -494,33 +420,19 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
                 child: Text(
                   'Alert #$_alertCount this session',
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: Colors.white70,
-                  ),
+                  style:
+                      AppTextStyles.bodySmall.copyWith(color: Colors.white70),
                 ),
               ),
               const SizedBox(height: 24),
-
-              // "I'm Awake" button
               ElevatedButton(
                 onPressed: () async {
-                  print('\n========================================');
-                  print('✅ USER ACKNOWLEDGED ALERT');
-                  print('========================================');
-                  print('Stopping vibration...');
-
-                  // Stop continuous vibration
                   await DrowsinessDetector.stopContinuousVibration();
-                  print('✅ Vibration stopped');
 
-                  // Close dialog
                   if (mounted) {
                     Navigator.pop(context);
-                    print('✅ Dialog closed');
                   }
 
-                  // Reset alert state after a brief delay
-                  print('Resetting alert state in 2 seconds...');
                   await Future.delayed(const Duration(seconds: 2));
 
                   if (mounted) {
@@ -528,24 +440,15 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                       _isAlerting = false;
                       _consecutiveClosedFrames = 0;
                     });
-                    print('✅ Alert state reset');
-                    print('   - _isAlerting: false');
-                    print('   - _consecutiveClosedFrames: 0');
                   }
-
-                  print('========================================\n');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
                   foregroundColor: AppColors.error,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 32,
-                    vertical: 16,
-                  ),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  elevation: 0,
+                      borderRadius: BorderRadius.circular(12)),
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
@@ -554,16 +457,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     const SizedBox(width: 8),
                     Text(
                       'I\'m Awake',
-                      style: AppTextStyles.titleMedium.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTextStyles.titleMedium
+                          .copyWith(fontWeight: FontWeight.bold),
                     ),
                   ],
                 ),
               ),
               const SizedBox(height: 12),
-
-              // Additional safety tip
               Text(
                 'If you feel tired, please find a safe place to rest',
                 style: AppTextStyles.bodySmall.copyWith(
@@ -668,7 +568,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 
   // ============================================
-  // BUILD UI
+  // BUILD UI (Keeping original working UI)
   // ============================================
 
   @override
@@ -796,9 +696,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             const SizedBox(height: 24),
             Text(
               'Camera Disconnected',
-              style: AppTextStyles.headlineMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
+              style: AppTextStyles.headlineMedium
+                  .copyWith(color: AppColors.textSecondary),
             ),
             const SizedBox(height: 8),
             Text(
@@ -837,7 +736,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
     return Stack(
       children: [
-        // MJPEG Stream
         Container(
           color: Colors.black,
           child: Center(
@@ -849,19 +747,17 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
           ),
         ),
-
-        // Detection Overlay
         if (_lastDetection != null && _isMonitoring)
           CustomPaint(
             painter: DetectionOverlayPainter(
               detectionResult: _lastDetection!,
-              imageSize: Size(MediaQuery.of(context).size.width,
-                  MediaQuery.of(context).size.height * 0.6),
+              imageSize: Size(
+                MediaQuery.of(context).size.width,
+                MediaQuery.of(context).size.height * 0.6,
+              ),
             ),
             child: Container(),
           ),
-
-        // Eye Opening Percentage
         if (_lastDetection != null && _isMonitoring)
           Positioned(
             bottom: 16,
@@ -869,8 +765,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             right: 16,
             child: _buildDetectionOverlay(),
           ),
-
-        // Recording Indicator
         if (_isMonitoring)
           Positioned(
             top: 16,
@@ -920,8 +814,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               },
             ),
           ),
-
-        // Alert Indicator
         if (_isAlerting)
           Positioned.fill(
             child: AnimatedBuilder(
@@ -942,8 +834,11 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                         child: Column(
                           mainAxisSize: MainAxisSize.min,
                           children: [
-                            const Icon(Icons.warning_rounded,
-                                color: Colors.white, size: 60),
+                            const Icon(
+                              Icons.warning_rounded,
+                              color: Colors.white,
+                              size: 60,
+                            ),
                             const SizedBox(height: 8),
                             Text(
                               'DROWSINESS\nDETECTED!',
@@ -1164,10 +1059,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 }
 
-// ============================================
-// DETECTION OVERLAY PAINTER
-// ============================================
-
 class DetectionOverlayPainter extends CustomPainter {
   final DrowsinessResult detectionResult;
   final Size imageSize;
@@ -1180,7 +1071,6 @@ class DetectionOverlayPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     for (var detection in detectionResult.detectionBoxes) {
-      // Convert normalized coordinates to screen coordinates
       final rect = Rect.fromCenter(
         center: Offset(
           detection.x * size.width,
@@ -1190,7 +1080,6 @@ class DetectionOverlayPainter extends CustomPainter {
         height: detection.height * size.height,
       );
 
-      // Choose color based on detection type
       Color boxColor;
       if (detection.isYawn) {
         boxColor = Colors.orange;
@@ -1200,7 +1089,6 @@ class DetectionOverlayPainter extends CustomPainter {
         boxColor = Colors.green;
       }
 
-      // Draw bounding box
       final paint = Paint()
         ..color = boxColor
         ..style = PaintingStyle.stroke
@@ -1208,7 +1096,6 @@ class DetectionOverlayPainter extends CustomPainter {
 
       canvas.drawRect(rect, paint);
 
-      // Draw label background
       final labelPaint = Paint()..color = boxColor;
       final labelRect = Rect.fromLTWH(
         rect.left,
@@ -1218,7 +1105,6 @@ class DetectionOverlayPainter extends CustomPainter {
       );
       canvas.drawRect(labelRect, labelPaint);
 
-      // Draw label text
       final textPainter = TextPainter(
         text: TextSpan(
           text:
