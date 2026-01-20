@@ -20,6 +20,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
 
   AnalyticsSummary? _summary;
   bool _isLoading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -35,17 +36,45 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   }
 
   Future<void> _loadAnalytics() async {
-    setState(() => _isLoading = true);
+    print('\n========================================');
+    print('📊 LOADING ANALYTICS PAGE');
+    print('========================================');
+
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
 
     try {
+      // Debug: Check Firestore data
+      await _analyticsService.debugPrintAllTrips();
+
+      // Load summary
       final summary = await _analyticsService.getAnalyticsSummary();
-      setState(() {
-        _summary = summary;
-        _isLoading = false;
-      });
-    } catch (e) {
-      print('Error loading analytics: $e');
-      setState(() => _isLoading = false);
+
+      print('📊 Summary loaded:');
+      print('   - Total trips: ${summary.totalTrips}');
+      print('   - Total alerts: ${summary.totalAlerts}');
+      print(
+          '   - Average score: ${summary.averageSafetyScore.toStringAsFixed(1)}');
+      print('========================================\n');
+
+      if (mounted) {
+        setState(() {
+          _summary = summary;
+          _isLoading = false;
+        });
+      }
+    } catch (e, stackTrace) {
+      print('❌ Error loading analytics: $e');
+      print('Stack trace: $stackTrace');
+
+      if (mounted) {
+        setState(() {
+          _error = e.toString();
+          _isLoading = false;
+        });
+      }
     }
   }
 
@@ -53,18 +82,34 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      body: CustomScrollView(
-        slivers: [
-          _buildAppBar(),
-          if (_isLoading)
-            const SliverFillRemaining(
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_summary == null)
-            _buildEmptyState()
-          else
-            SliverToBoxAdapter(child: _buildContent()),
-        ],
+      body: RefreshIndicator(
+        onRefresh: _loadAnalytics,
+        color: AppColors.primary,
+        child: CustomScrollView(
+          slivers: [
+            _buildAppBar(),
+            if (_isLoading)
+              SliverFillRemaining(
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const CircularProgressIndicator(color: AppColors.primary),
+                      const SizedBox(height: 16),
+                      Text('Loading analytics...',
+                          style: AppTextStyles.bodyLarge),
+                    ],
+                  ),
+                ),
+              )
+            else if (_error != null)
+              _buildErrorState()
+            else if (_summary == null || _summary!.totalTrips == 0)
+              _buildEmptyState()
+            else
+              SliverToBoxAdapter(child: _buildContent()),
+          ],
+        ),
       ),
     );
   }
@@ -75,11 +120,19 @@ class _AnalyticsPageState extends State<AnalyticsPage>
       floating: false,
       pinned: true,
       backgroundColor: AppColors.primary,
-      flexibleSpace: FlexibleSpaceBar(
-        title: Text(
-          'Analytics',
-          style: AppTextStyles.headlineMedium.copyWith(color: Colors.white),
+      actions: [
+        IconButton(
+          onPressed: () {
+            print('🔄 Refreshing analytics...');
+            _loadAnalytics();
+          },
+          icon: const Icon(Icons.refresh, color: Colors.white),
+          tooltip: 'Refresh',
         ),
+      ],
+      flexibleSpace: FlexibleSpaceBar(
+        title: Text('Analytics',
+            style: AppTextStyles.headlineMedium.copyWith(color: Colors.white)),
         background: Container(
           decoration: BoxDecoration(
             gradient: LinearGradient(
@@ -90,14 +143,10 @@ class _AnalyticsPageState extends State<AnalyticsPage>
           ),
           child: Stack(
             children: [
-              // Background pattern
               Positioned.fill(
-                child: CustomPaint(
-                  painter: AnalyticsPatternPainter(),
-                ),
+                child: CustomPaint(painter: GridPatternPainter()),
               ),
-              // Safety score badge
-              if (_summary != null)
+              if (_summary != null && _summary!.totalTrips > 0)
                 Positioned(
                   right: 20,
                   bottom: 60,
@@ -117,7 +166,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     if (score >= 90) {
       scoreColor = AppColors.success;
     } else if (score >= 75) {
-      scoreColor = Colors.orange;
+      scoreColor = AppColors.warning;
     } else {
       scoreColor = AppColors.error;
     }
@@ -136,20 +185,19 @@ class _AnalyticsPageState extends State<AnalyticsPage>
         ],
       ),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             score.toStringAsFixed(0),
-            style: AppTextStyles.headlineLarge.copyWith(
+            style: AppTextStyles.displayMedium.copyWith(
               color: scoreColor,
-              fontWeight: FontWeight.bold,
               fontSize: 32,
             ),
           ),
           Text(
             'Safety\nScore',
-            style: AppTextStyles.labelSmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
+            style: AppTextStyles.labelSmall
+                .copyWith(color: AppColors.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],
@@ -161,19 +209,21 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     return Column(
       children: [
         const SizedBox(height: 16),
-
-        // Quick stats
         _buildQuickStats(),
-
         const SizedBox(height: 24),
-
-        // Tabs
         _buildTabBar(),
-
         const SizedBox(height: 16),
-
-        // Tab content
-        _buildTabContent(),
+        SizedBox(
+          height: MediaQuery.of(context).size.height - 400,
+          child: TabBarView(
+            controller: _tabController,
+            children: [
+              _buildOverviewTab(),
+              _buildHistoryTab(),
+              _buildInsightsTab(),
+            ],
+          ),
+        ),
       ],
     );
   }
@@ -184,61 +234,59 @@ class _AnalyticsPageState extends State<AnalyticsPage>
       child: Row(
         children: [
           Expanded(
-            child: _buildStatCard(
-              icon: Icons.local_fire_department,
-              label: 'Current Streak',
-              value: '${_summary!.currentStreak}',
-              subtitle: 'trips',
-              color: AppColors.success,
+            child: GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Icon(Icons.local_fire_department,
+                      color: AppColors.success, size: 32),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_summary!.currentStreak}',
+                    style: AppTextStyles.headlineMedium.copyWith(
+                      color: AppColors.success,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Current Streak',
+                      style: AppTextStyles.labelMedium,
+                      textAlign: TextAlign.center),
+                  Text('trips', style: AppTextStyles.bodySmall),
+                ],
+              ),
             ),
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: _buildStatCard(
-              icon: Icons.trending_up,
-              label: 'Improvement',
-              value:
-                  '${_summary!.weeklyImprovement >= 0 ? '+' : ''}${_summary!.weeklyImprovement.toStringAsFixed(1)}%',
-              subtitle: 'this week',
-              color: _summary!.weeklyImprovement >= 0
-                  ? AppColors.success
-                  : AppColors.error,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildStatCard({
-    required IconData icon,
-    required String label,
-    required String value,
-    required String subtitle,
-    required Color color,
-  }) {
-    return GlassCard(
-      child: Column(
-        children: [
-          Icon(icon, color: color, size: 32),
-          const SizedBox(height: 8),
-          Text(
-            value,
-            style: AppTextStyles.headlineMedium.copyWith(
-              color: color,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            label,
-            style: AppTextStyles.labelMedium,
-            textAlign: TextAlign.center,
-          ),
-          Text(
-            subtitle,
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
+            child: GlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.trending_up,
+                    color: _summary!.weeklyImprovement >= 0
+                        ? AppColors.success
+                        : AppColors.error,
+                    size: 32,
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_summary!.weeklyImprovement >= 0 ? '+' : ''}${_summary!.weeklyImprovement.toStringAsFixed(1)}%',
+                    style: AppTextStyles.headlineMedium.copyWith(
+                      color: _summary!.weeklyImprovement >= 0
+                          ? AppColors.success
+                          : AppColors.error,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text('Improvement',
+                      style: AppTextStyles.labelMedium,
+                      textAlign: TextAlign.center),
+                  Text('this week', style: AppTextStyles.bodySmall),
+                ],
+              ),
             ),
           ),
         ],
@@ -250,7 +298,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     return Container(
       margin: const EdgeInsets.symmetric(horizontal: 16),
       decoration: BoxDecoration(
-        color: AppColors.surface,
+        color: AppColors.surfaceVariant,
         borderRadius: BorderRadius.circular(12),
       ),
       child: TabBar(
@@ -261,6 +309,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
         ),
         labelColor: Colors.white,
         unselectedLabelColor: AppColors.textSecondary,
+        dividerColor: Colors.transparent,
         tabs: const [
           Tab(text: 'Overview'),
           Tab(text: 'History'),
@@ -270,21 +319,10 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     );
   }
 
-  Widget _buildTabContent() {
-    return SizedBox(
-      height: MediaQuery.of(context).size.height - 400,
-      child: TabBarView(
-        controller: _tabController,
-        children: [
-          _buildOverviewTab(),
-          _buildHistoryTab(),
-          _buildInsightsTab(),
-        ],
-      ),
-    );
-  }
+  // ============================================
+  // TAB 1: OVERVIEW
+  // ============================================
 
-  // TAB 1: Overview
   Widget _buildOverviewTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -293,23 +331,12 @@ class _AnalyticsPageState extends State<AnalyticsPage>
         children: [
           Text('Statistics', style: AppTextStyles.headlineSmall),
           const SizedBox(height: 16),
-
-          _buildOverviewCard(
-            'Total Trips',
-            '${_summary!.totalTrips}',
-            Icons.directions_car,
-            AppColors.primary,
-          ),
+          _buildOverviewCard('Total Trips', '${_summary!.totalTrips}',
+              Icons.directions_car, AppColors.primary),
           const SizedBox(height: 12),
-
-          _buildOverviewCard(
-            'Total Driving Time',
-            _summary!.totalDrivingTime,
-            Icons.access_time,
-            Colors.blue,
-          ),
+          _buildOverviewCard('Total Driving Time', _summary!.totalDrivingTime,
+              Icons.access_time, AppColors.info),
           const SizedBox(height: 12),
-
           _buildOverviewCard(
             'Total Alerts',
             '${_summary!.totalAlerts}',
@@ -317,7 +344,6 @@ class _AnalyticsPageState extends State<AnalyticsPage>
             _summary!.totalAlerts > 0 ? AppColors.error : AppColors.success,
           ),
           const SizedBox(height: 12),
-
           _buildOverviewCard(
             'Risk Level',
             _summary!.riskLevel,
@@ -326,10 +352,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                 ? AppColors.success
                 : AppColors.warning,
           ),
-
           const SizedBox(height: 24),
-
-          // Alerts by time chart
           Text('Alerts by Time of Day', style: AppTextStyles.headlineSmall),
           const SizedBox(height: 16),
           _buildTimeOfDayChart(),
@@ -341,6 +364,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   Widget _buildOverviewCard(
       String label, String value, IconData icon, Color color) {
     return GlassCard(
+      padding: const EdgeInsets.all(16),
       child: Row(
         children: [
           Container(
@@ -380,13 +404,26 @@ class _AnalyticsPageState extends State<AnalyticsPage>
         : data.values.reduce((a, b) => a > b ? a : b).toDouble();
 
     return GlassCard(
+      padding: const EdgeInsets.all(16),
       child: SizedBox(
         height: 200,
         child: BarChart(
           BarChartData(
             alignment: BarChartAlignment.spaceAround,
-            maxY: maxValue > 0 ? maxValue : 5,
-            barTouchData: BarTouchData(enabled: true),
+            maxY: maxValue > 0 ? maxValue + 2 : 5,
+            barTouchData: BarTouchData(
+              enabled: true,
+              touchTooltipData: BarTouchTooltipData(
+                getTooltipColor: (group) => AppColors.primary,
+                getTooltipItem: (group, groupIndex, rod, rodIndex) {
+                  const titles = ['Morning', 'Afternoon', 'Evening', 'Night'];
+                  return BarTooltipItem(
+                    '${titles[group.x.toInt()]}\n${rod.toY.toInt()} alerts',
+                    AppTextStyles.labelSmall.copyWith(color: Colors.white),
+                  );
+                },
+              ),
+            ),
             titlesData: FlTitlesData(
               show: true,
               bottomTitles: AxisTitles(
@@ -397,36 +434,30 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                     if (value >= 0 && value < titles.length) {
                       return Padding(
                         padding: const EdgeInsets.only(top: 8),
-                        child: Text(
-                          titles[value.toInt()],
-                          style: AppTextStyles.labelSmall,
-                        ),
+                        child: Text(titles[value.toInt()],
+                            style: AppTextStyles.labelSmall),
                       );
                     }
                     return const SizedBox();
                   },
                 ),
               ),
-              leftTitles: AxisTitles(
-                sideTitles: SideTitles(showTitles: false),
-              ),
-              topTitles: AxisTitles(
-                sideTitles: SideTitles(showTitles: false),
-              ),
-              rightTitles: AxisTitles(
-                sideTitles: SideTitles(showTitles: false),
-              ),
+              leftTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              topTitles: AxisTitles(sideTitles: SideTitles(showTitles: false)),
+              rightTitles:
+                  AxisTitles(sideTitles: SideTitles(showTitles: false)),
             ),
             gridData: FlGridData(show: false),
             borderData: FlBorderData(show: false),
             barGroups: [
               _buildBarGroup(
-                  0, (data['Morning'] ?? 0).toDouble(), Colors.orange),
+                  0, (data['Morning'] ?? 0).toDouble(), AppColors.warning),
               _buildBarGroup(
-                  1, (data['Afternoon'] ?? 0).toDouble(), Colors.blue),
+                  1, (data['Afternoon'] ?? 0).toDouble(), AppColors.info),
               _buildBarGroup(
-                  2, (data['Evening'] ?? 0).toDouble(), Colors.purple),
-              _buildBarGroup(3, (data['Night'] ?? 0).toDouble(), Colors.indigo),
+                  2, (data['Evening'] ?? 0).toDouble(), AppColors.secondary),
+              _buildBarGroup(
+                  3, (data['Night'] ?? 0).toDouble(), AppColors.primary),
             ],
           ),
         ),
@@ -448,13 +479,37 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     );
   }
 
-  // TAB 2: History
+  // ============================================
+  // TAB 2: HISTORY
+  // ============================================
+
   Widget _buildHistoryTab() {
     return StreamBuilder<List<TripSession>>(
       stream: _analyticsService.getTripsStream(),
       builder: (context, snapshot) {
+        print('📊 History tab stream state: ${snapshot.connectionState}');
+        print('📊 Has data: ${snapshot.hasData}');
+        print('📊 Data length: ${snapshot.data?.length ?? 0}');
+
         if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
+          return const Center(
+              child: CircularProgressIndicator(color: AppColors.primary));
+        }
+
+        if (snapshot.hasError) {
+          print('❌ Stream error: ${snapshot.error}');
+          return Center(
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(Icons.error_outline, size: 64, color: AppColors.error),
+                const SizedBox(height: 16),
+                Text('Error loading trips', style: AppTextStyles.bodyLarge),
+                const SizedBox(height: 8),
+                Text('${snapshot.error}', style: AppTextStyles.bodySmall),
+              ],
+            ),
+          );
         }
 
         if (!snapshot.hasData || snapshot.data!.isEmpty) {
@@ -465,12 +520,18 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                 Icon(Icons.history, size: 64, color: AppColors.textHint),
                 const SizedBox(height: 16),
                 Text('No trips yet', style: AppTextStyles.bodyLarge),
+                const SizedBox(height: 8),
+                Text(
+                  'Start monitoring to see your trip history',
+                  style: AppTextStyles.bodySmall,
+                ),
               ],
             ),
           );
         }
 
         final trips = snapshot.data!;
+        print('📊 Displaying ${trips.length} trips');
 
         return ListView.builder(
           padding: const EdgeInsets.all(16),
@@ -488,13 +549,14 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     if (trip.safetyScore >= 90) {
       scoreColor = AppColors.success;
     } else if (trip.safetyScore >= 75) {
-      scoreColor = Colors.orange;
+      scoreColor = AppColors.warning;
     } else {
       scoreColor = AppColors.error;
     }
 
     return GlassCard(
       margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -515,15 +577,12 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                   children: [
                     Text(
                       trip.formattedDate,
-                      style: AppTextStyles.titleMedium.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
+                      style: AppTextStyles.titleMedium
+                          .copyWith(fontWeight: FontWeight.bold),
                     ),
                     Text(
                       '${trip.startTime.hour}:${trip.startTime.minute.toString().padLeft(2, '0')}',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        color: AppColors.textSecondary,
-                      ),
+                      style: AppTextStyles.bodySmall,
                     ),
                   ],
                 ),
@@ -565,17 +624,15 @@ class _AnalyticsPageState extends State<AnalyticsPage>
       children: [
         Icon(icon, size: 16, color: AppColors.textSecondary),
         const SizedBox(width: 4),
-        Text(
-          label,
-          style: AppTextStyles.bodySmall.copyWith(
-            color: AppColors.textSecondary,
-          ),
-        ),
+        Text(label, style: AppTextStyles.bodySmall),
       ],
     );
   }
 
-  // TAB 3: Insights
+  // ============================================
+  // TAB 3: INSIGHTS
+  // ============================================
+
   Widget _buildInsightsTab() {
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
@@ -616,6 +673,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   Widget _buildAchievement(
       String title, String description, bool unlocked, IconData icon) {
     return GlassCard(
+      padding: const EdgeInsets.all(16),
       child: Row(
         children: [
           Container(
@@ -646,12 +704,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
                   ),
                 ),
                 const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+                Text(description, style: AppTextStyles.bodySmall),
               ],
             ),
           ),
@@ -665,7 +718,6 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   List<Widget> _buildRecommendations() {
     List<Widget> recommendations = [];
 
-    // Analyze data and provide insights
     if (_summary!.totalAlerts > 10) {
       recommendations.add(_buildRecommendationCard(
         'High Alert Frequency',
@@ -712,6 +764,7 @@ class _AnalyticsPageState extends State<AnalyticsPage>
   Widget _buildRecommendationCard(
       String title, String description, IconData icon, Color color) {
     return GlassCard(
+      padding: const EdgeInsets.all(16),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -721,19 +774,11 @@ class _AnalyticsPageState extends State<AnalyticsPage>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  title,
-                  style: AppTextStyles.titleMedium.copyWith(
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
+                Text(title,
+                    style: AppTextStyles.titleMedium
+                        .copyWith(fontWeight: FontWeight.bold)),
                 const SizedBox(height: 4),
-                Text(
-                  description,
-                  style: AppTextStyles.bodySmall.copyWith(
-                    color: AppColors.textSecondary,
-                  ),
-                ),
+                Text(description, style: AppTextStyles.bodySmall),
               ],
             ),
           ),
@@ -742,57 +787,162 @@ class _AnalyticsPageState extends State<AnalyticsPage>
     );
   }
 
+  // ============================================
+  // EMPTY & ERROR STATES
+  // ============================================
+
   Widget _buildEmptyState() {
     return SliverFillRemaining(
       child: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.analytics, size: 80, color: AppColors.textHint),
-            const SizedBox(height: 24),
-            Text(
-              'No Analytics Data',
-              style: AppTextStyles.headlineMedium,
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'Start monitoring to see your driving analytics',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.analytics_outlined,
+                  size: 80, color: AppColors.textHint),
+              const SizedBox(height: 24),
+              Text('No Analytics Data Yet',
+                  style: AppTextStyles.headlineMedium,
+                  textAlign: TextAlign.center),
+              const SizedBox(height: 8),
+              Text(
+                'Start monitoring your driving sessions to see analytics and insights',
+                style: AppTextStyles.bodyMedium
+                    .copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
               ),
-              textAlign: TextAlign.center,
+              const SizedBox(height: 32),
+              OutlinedButton.icon(
+                onPressed: () async {
+                  await _analyticsService.debugPrintAllTrips();
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                          content: Text('Check console for debug info')),
+                    );
+                  }
+                },
+                icon: const Icon(Icons.bug_report),
+                label: const Text('Debug: Check Database'),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.primary),
+              ),
+              const SizedBox(height: 24),
+              GlassCard(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline,
+                            color: AppColors.info, size: 20),
+                        const SizedBox(width: 8),
+                        Text('How to generate analytics:',
+                            style: AppTextStyles.labelLarge),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    _buildInfoStep('1', 'Connect to ESP32-CAM'),
+                    _buildInfoStep('2', 'Start monitoring'),
+                    _buildInfoStep('3', 'Drive for a few minutes'),
+                    _buildInfoStep('4', 'Stop monitoring'),
+                    _buildInfoStep('5', 'Come back here to view analytics'),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInfoStep(String number, String text) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Container(
+            width: 24,
+            height: 24,
+            decoration: BoxDecoration(
+              color: AppColors.info,
+              shape: BoxShape.circle,
             ),
-          ],
+            child: Center(
+              child: Text(
+                number,
+                style: AppTextStyles.labelSmall.copyWith(
+                  color: Colors.white,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Text(text, style: AppTextStyles.bodySmall)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildErrorState() {
+    return SliverFillRemaining(
+      child: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.error_outline, size: 80, color: AppColors.error),
+              const SizedBox(height: 24),
+              Text('Error Loading Analytics',
+                  style: AppTextStyles.headlineMedium),
+              const SizedBox(height: 8),
+              Text(
+                _error ?? 'Unknown error',
+                style: AppTextStyles.bodyMedium
+                    .copyWith(color: AppColors.textSecondary),
+                textAlign: TextAlign.center,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton.icon(
+                onPressed: _loadAnalytics,
+                icon: const Icon(Icons.refresh),
+                label: const Text('Retry'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.primary,
+                  foregroundColor: Colors.white,
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
 }
 
-// Custom painter for background pattern
-class AnalyticsPatternPainter extends CustomPainter {
+// ============================================
+// CUSTOM PAINTERS
+// ============================================
+
+class GridPatternPainter extends CustomPainter {
   @override
   void paint(Canvas canvas, Size size) {
     final paint = Paint()
       ..color = Colors.white.withOpacity(0.1)
-      ..strokeWidth = 2
+      ..strokeWidth = 1
       ..style = PaintingStyle.stroke;
 
-    // Draw grid pattern
     for (double i = 0; i < size.width; i += 40) {
-      canvas.drawLine(
-        Offset(i, 0),
-        Offset(i, size.height),
-        paint,
-      );
+      canvas.drawLine(Offset(i, 0), Offset(i, size.height), paint);
     }
 
     for (double i = 0; i < size.height; i += 40) {
-      canvas.drawLine(
-        Offset(0, i),
-        Offset(size.width, i),
-        paint,
-      );
+      canvas.drawLine(Offset(0, i), Offset(size.width, i), paint);
     }
   }
 
