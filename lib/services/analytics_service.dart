@@ -10,70 +10,104 @@ class AnalyticsService {
 
   // Get all trips for current user
   Stream<List<TripSession>> getTripsStream() {
+    print('📊 Getting trips stream for user: $_userId');
+
+    if (_userId.isEmpty) {
+      print('⚠️ No user logged in');
+      return Stream.value([]);
+    }
+
     return _firestore
         .collection('trips')
         .where('userId', isEqualTo: _userId)
         .orderBy('startTime', descending: true)
         .limit(50)
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => TripSession.fromFirestore(doc))
-            .toList());
+        .map((snapshot) {
+      print('📊 Received ${snapshot.docs.length} trips from Firestore');
+      return snapshot.docs
+          .map((doc) => TripSession.fromFirestore(doc))
+          .toList();
+    });
   }
 
   // Get analytics summary
   Future<AnalyticsSummary> getAnalyticsSummary() async {
-    final trips = await _firestore
-        .collection('trips')
-        .where('userId', isEqualTo: _userId)
-        .orderBy('startTime', descending: true)
-        .get();
+    print('📊 Getting analytics summary for user: $_userId');
 
-    if (trips.docs.isEmpty) {
-      return AnalyticsSummary(
-        totalTrips: 0,
-        totalDrivingMinutes: 0,
-        totalAlerts: 0,
-        averageSafetyScore: 100.0,
-        currentStreak: 0,
-        longestStreak: 0,
-        alertsByTimeOfDay: {},
-        recentTrips: [],
-        weeklyImprovement: 0.0,
-      );
+    if (_userId.isEmpty) {
+      print('⚠️ No user logged in');
+      return _getEmptySummary();
     }
 
-    final sessions =
-        trips.docs.map((doc) => TripSession.fromFirestore(doc)).toList();
+    try {
+      final trips = await _firestore
+          .collection('trips')
+          .where('userId', isEqualTo: _userId)
+          .orderBy('startTime', descending: true)
+          .get();
 
-    // Calculate total metrics
-    int totalTrips = sessions.length;
-    int totalMinutes =
-        sessions.fold(0, (sum, trip) => sum + trip.durationMinutes);
-    int totalAlerts = sessions.fold(0, (sum, trip) => sum + trip.alertCount);
-    double avgScore =
-        sessions.fold(0.0, (sum, trip) => sum + trip.safetyScore) / totalTrips;
+      print('📊 Found ${trips.docs.length} trips');
 
-    // Calculate streaks
-    int currentStreak = _calculateCurrentStreak(sessions);
-    int longestStreak = _calculateLongestStreak(sessions);
+      if (trips.docs.isEmpty) {
+        return _getEmptySummary();
+      }
 
-    // Alerts by time of day
-    Map<String, int> alertsByTime = _calculateAlertsByTime(sessions);
+      final sessions =
+          trips.docs.map((doc) => TripSession.fromFirestore(doc)).toList();
 
-    // Weekly improvement
-    double weeklyImprovement = _calculateWeeklyImprovement(sessions);
+      // Calculate total metrics
+      int totalTrips = sessions.length;
+      int totalMinutes =
+          sessions.fold(0, (sum, trip) => sum + trip.durationMinutes);
+      int totalAlerts = sessions.fold(0, (sum, trip) => sum + trip.alertCount);
+      double avgScore =
+          sessions.fold(0.0, (sum, trip) => sum + trip.safetyScore) /
+              totalTrips;
 
+      // Calculate streaks
+      int currentStreak = _calculateCurrentStreak(sessions);
+      int longestStreak = _calculateLongestStreak(sessions);
+
+      // Alerts by time of day
+      Map<String, int> alertsByTime = _calculateAlertsByTime(sessions);
+
+      // Weekly improvement
+      double weeklyImprovement = _calculateWeeklyImprovement(sessions);
+
+      print('📊 Analytics summary calculated:');
+      print('   - Total trips: $totalTrips');
+      print('   - Total alerts: $totalAlerts');
+      print('   - Average score: ${avgScore.toStringAsFixed(1)}');
+
+      return AnalyticsSummary(
+        totalTrips: totalTrips,
+        totalDrivingMinutes: totalMinutes,
+        totalAlerts: totalAlerts,
+        averageSafetyScore: avgScore,
+        currentStreak: currentStreak,
+        longestStreak: longestStreak,
+        alertsByTimeOfDay: alertsByTime,
+        recentTrips: sessions.take(10).toList(),
+        weeklyImprovement: weeklyImprovement,
+      );
+    } catch (e) {
+      print('❌ Error getting analytics summary: $e');
+      return _getEmptySummary();
+    }
+  }
+
+  AnalyticsSummary _getEmptySummary() {
     return AnalyticsSummary(
-      totalTrips: totalTrips,
-      totalDrivingMinutes: totalMinutes,
-      totalAlerts: totalAlerts,
-      averageSafetyScore: avgScore,
-      currentStreak: currentStreak,
-      longestStreak: longestStreak,
-      alertsByTimeOfDay: alertsByTime,
-      recentTrips: sessions.take(10).toList(),
-      weeklyImprovement: weeklyImprovement,
+      totalTrips: 0,
+      totalDrivingMinutes: 0,
+      totalAlerts: 0,
+      averageSafetyScore: 100.0,
+      currentStreak: 0,
+      longestStreak: 0,
+      alertsByTimeOfDay: {},
+      recentTrips: [],
+      weeklyImprovement: 0.0,
     );
   }
 
@@ -154,20 +188,52 @@ class AnalyticsService {
         lastWeekTrips.fold(0.0, (sum, t) => sum + t.safetyScore) /
             lastWeekTrips.length;
 
+    if (lastWeekAvg == 0) return 0.0;
+
     return ((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 100;
   }
 
   // Get trips for specific date range
   Future<List<TripSession>> getTripsByDateRange(
       DateTime start, DateTime end) async {
-    final trips = await _firestore
-        .collection('trips')
-        .where('userId', isEqualTo: _userId)
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(end))
-        .orderBy('startTime', descending: true)
-        .get();
+    if (_userId.isEmpty) return [];
 
-    return trips.docs.map((doc) => TripSession.fromFirestore(doc)).toList();
+    try {
+      final trips = await _firestore
+          .collection('trips')
+          .where('userId', isEqualTo: _userId)
+          .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
+          .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(end))
+          .orderBy('startTime', descending: true)
+          .get();
+
+      return trips.docs.map((doc) => TripSession.fromFirestore(doc)).toList();
+    } catch (e) {
+      print('❌ Error getting trips by date range: $e');
+      return [];
+    }
+  }
+
+  // Debug: Get all trips (no filtering)
+  Future<void> debugPrintAllTrips() async {
+    print('\n=== DEBUG: ALL TRIPS ===');
+    try {
+      final allTrips = await _firestore.collection('trips').get();
+      print('Total trips in database: ${allTrips.docs.length}');
+
+      for (var doc in allTrips.docs) {
+        final data = doc.data();
+        print('Trip ${doc.id}:');
+        print('  - userId: ${data['userId']}');
+        print('  - alertCount: ${data['alertCount']}');
+        print('  - safetyScore: ${data['safetyScore']}');
+        print('  - isActive: ${data['isActive']}');
+      }
+
+      print('\nCurrent user ID: $_userId');
+      print('========================\n');
+    } catch (e) {
+      print('❌ Debug error: $e');
+    }
   }
 }
