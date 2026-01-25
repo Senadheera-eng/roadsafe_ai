@@ -489,6 +489,54 @@ class DataService {
     final sessions = await getSessions().first;
     return sessions.fold<int>(0, (sum, session) => sum + session.totalAlerts);
   }
+  // Add these methods to your existing DataService class
+
+  Future<String> startTrip() async {
+    final userId = _auth.currentUser?.uid;
+    if (userId == null) throw Exception('User not logged in');
+
+    final tripData = {
+      'userId': userId,
+      'startTime': FieldValue.serverTimestamp(),
+      'durationMinutes': 0,
+      'totalDetections': 0,
+      'alertCount': 0,
+      'yawnCount': 0,
+      'safetyScore': 100.0,
+      'isActive': true,
+    };
+
+    final doc = await _firestore.collection('trips').add(tripData);
+    return doc.id;
+  }
+
+  Future<void> logAlert(String sessionId, String alertType) async {
+    await _firestore.collection('trips').doc(sessionId).update({
+      'alertCount': FieldValue.increment(1),
+      if (alertType == 'yawn') 'yawnCount': FieldValue.increment(1),
+    });
+  }
+
+  Future<void> incrementDetections(String sessionId) async {
+    await _firestore.collection('trips').doc(sessionId).update({
+      'totalDetections': FieldValue.increment(1),
+    });
+  }
+
+  Future<void> endTrip(String sessionId, int durationMinutes) async {
+    final tripDoc = await _firestore.collection('trips').doc(sessionId).get();
+    final alertCount = tripDoc.data()?['alertCount'] ?? 0;
+
+    // Calculate safety score: 100 - (alerts * 5), min 0
+    double safetyScore = (100 - (alertCount * 5)).clamp(0, 100).toDouble();
+
+    await _firestore.collection('trips').doc(sessionId).update({
+      'endTime': FieldValue.serverTimestamp(),
+      'durationMinutes': durationMinutes,
+      'safetyScore': safetyScore,
+      'isActive': false,
+    });
+  }
 
   // Cleanup
   void dispose() {
