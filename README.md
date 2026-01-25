@@ -822,36 +822,9 @@ SOFTWARE.
 
 ### Project Maintainers
 
-- **Lead Developer**: Your Name
-  - GitHub: [@yourusername](https://github.com/yourusername)
-  - Email: your.email@example.com
-
-### Project Links
-
-- **Website**: [roadsafe-ai.com](https://roadsafe-ai.com) (coming soon)
-- **Documentation**: [docs.roadsafe-ai.com](https://docs.roadsafe-ai.com)
-- **Issue Tracker**: [GitHub Issues](https://github.com/yourusername/roadsafe-ai/issues)
-- **Discord**: [Join Community](https://discord.gg/YOUR_INVITE)
-- **Twitter**: [@RoadSafeAI](https://twitter.com/roadsafeai)
-
----
-
-## ⭐ Star History
-
-[![Star History Chart](https://api.star-history.com/svg?repos=yourusername/roadsafe-ai&type=Date)](https://star-history.com/#yourusername/roadsafe-ai&Date)
-
----
-
-## 🎖 Badges
-
-![Build Status](https://img.shields.io/github/workflow/status/yourusername/roadsafe-ai/CI)
-![Coverage](https://img.shields.io/codecov/c/github/yourusername/roadsafe-ai)
-![Version](https://img.shields.io/github/v/release/yourusername/roadsafe-ai)
-![Downloads](https://img.shields.io/github/downloads/yourusername/roadsafe-ai/total)
-![Contributors](https://img.shields.io/github/contributors/yourusername/roadsafe-ai)
-![Last Commit](https://img.shields.io/github/last-commit/yourusername/roadsafe-ai)
-
----
+- **Lead Developers**: Lahiru Senadheera
+  - GitHub: [@Senadheera-eng](https://github.com/Senadheera-eng)
+  - Email: lahiru.senadheera2002@gmail.com
 
 <div align="center">
 
