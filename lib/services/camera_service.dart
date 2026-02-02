@@ -112,7 +112,6 @@ class CameraService {
       return false;
     }
 
-    print('🔍 Trying cached IP: $cachedIP');
     final device = await _checkESP32Device(cachedIP);
     if (device != null) {
       print('✅ Quick connect successful!');
@@ -133,7 +132,7 @@ class CameraService {
     List<ESP32Device> foundDevices = [];
 
     // STEP 1: Try cached IP first
-    print('📍 Step 1: Checking cached IP...');
+    print('🔍 Step 1: Checking cached IP...');
     final cachedIP = await _getCachedDeviceIP();
     if (cachedIP != null) {
       final device = await _checkESP32Device(cachedIP);
@@ -147,7 +146,7 @@ class CameraService {
     }
 
     // STEP 2: Try known IPs
-    print('📍 Step 2: Checking known IPs...');
+    print('🔍 Step 2: Checking known IPs...');
     final knownIPs = await scanKnownIPs();
     if (knownIPs.isNotEmpty) {
       foundDevices.addAll(knownIPs);
@@ -158,7 +157,7 @@ class CameraService {
     }
 
     // STEP 3: Scan current network
-    print('📍 Step 3: Scanning current network...');
+    print('🔍 Step 3: Scanning current network...');
     final currentNetwork = await _getLocalNetworkBase();
     if (currentNetwork != null) {
       print('🌐 Current network: $currentNetwork.x');
@@ -173,7 +172,7 @@ class CameraService {
     }
 
     // STEP 4: Scan common ranges
-    print('📍 Step 4: Scanning common ranges...');
+    print('🔍 Step 4: Scanning common ranges...');
     final commonRanges = [
       '192.168.1',
       '192.168.0',
@@ -283,7 +282,7 @@ class CameraService {
           final response = await http.get(
             Uri.parse('http://$ipAddress$endpoint'),
             headers: {'Connection': 'close'},
-          ).timeout(const Duration(seconds: 10)); // ⭐ CHANGED: 2 → 10 seconds
+          ).timeout(const Duration(seconds: 2));
 
           if (response.statusCode == 200) {
             final body = response.body.toLowerCase();
@@ -317,8 +316,7 @@ class CameraService {
                     .head(
                       Uri.parse('http://$ipAddress/stream'),
                     )
-                    .timeout(
-                        const Duration(seconds: 3)); // ⭐ CHANGED: 1 → 3 seconds
+                    .timeout(const Duration(seconds: 1));
 
                 if (streamCheck.statusCode == 200) {
                   isESP32 = true;
@@ -357,7 +355,7 @@ class CameraService {
           .get(
             Uri.parse('http://${device.ipAddress}/'),
           )
-          .timeout(const Duration(seconds: 10)); // ⭐ CHANGED: 5 → 10 seconds
+          .timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
         print('✅ Connection OK');
@@ -367,7 +365,7 @@ class CameraService {
               .head(
                 Uri.parse('http://${device.ipAddress}/stream'),
               )
-              .timeout(const Duration(seconds: 5)); // ⭐ CHANGED: 3 → 5 seconds
+              .timeout(const Duration(seconds: 3));
 
           if (streamTest.statusCode == 200) {
             print('✅ Stream endpoint OK');
