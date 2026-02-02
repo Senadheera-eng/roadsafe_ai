@@ -7,44 +7,56 @@ class ESP32Device {
   final String ipAddress;
   final String deviceName;
   final bool isConnected;
+  final DateTime? lastSeen;
 
   ESP32Device({
     required this.ipAddress,
     required this.deviceName,
     required this.isConnected,
+    this.lastSeen,
   });
 
   @override
-  String toString() => 'ESP32Device($ipAddress, $deviceName)';
+  String toString() =>
+      'ESP32Device($ipAddress, $deviceName, connected: $isConnected)';
 
-  ESP32Device copyWith({bool? isConnected}) {
+  ESP32Device copyWith({bool? isConnected, DateTime? lastSeen}) {
     return ESP32Device(
       ipAddress: ipAddress,
       deviceName: deviceName,
       isConnected: isConnected ?? this.isConnected,
+      lastSeen: lastSeen ?? this.lastSeen,
     );
   }
 }
 
 class CameraService {
-  Timer? _periodicScanTimer;
-  bool _isPeriodicScanEnabled = false;
-
   // Singleton pattern
   static final CameraService _instance = CameraService._internal();
   factory CameraService() => _instance;
   CameraService._internal();
 
+  // State management
   ESP32Device? _connectedDevice;
+  Timer? _periodicScanTimer;
+  Timer? _connectionWatchdog;
+  bool _isScanning = false;
+
+  // Streams
   final StreamController<List<ESP32Device>> _devicesController =
       StreamController.broadcast();
   final StreamController<bool> _connectionController =
       StreamController.broadcast();
+  final StreamController<String> _statusController =
+      StreamController.broadcast();
 
+  // Public getters
   Stream<List<ESP32Device>> get devicesStream => _devicesController.stream;
   Stream<bool> get connectionStream => _connectionController.stream;
+  Stream<String> get statusStream => _statusController.stream;
   ESP32Device? get connectedDevice => _connectedDevice;
   bool get isConnected => _connectedDevice?.isConnected ?? false;
+  bool get isScanning => _isScanning;
 
   String get streamUrl {
     if (_connectedDevice == null) return '';
@@ -52,7 +64,7 @@ class CameraService {
   }
 
   // ============================================
-  // CACHING & QUICK CONNECT
+  // IMPROVED CACHING SYSTEM
   // ============================================
 
   Future<void> _cacheDeviceIP(String ip) async {
@@ -61,6 +73,17 @@ class CameraService {
       await prefs.setString('esp32_last_ip', ip);
       await prefs.setInt(
           'esp32_last_connection', DateTime.now().millisecondsSinceEpoch);
+
+      // Also maintain a list of successful IPs
+      List<String> knownIPs = prefs.getStringList('esp32_known_ips') ?? [];
+      if (!knownIPs.contains(ip)) {
+        knownIPs.insert(0, ip); // Add to front
+        if (knownIPs.length > 5) {
+          knownIPs = knownIPs.sublist(0, 5); // Keep only last 5
+        }
+        await prefs.setStringList('esp32_known_ips', knownIPs);
+      }
+
       print('✅ Cached ESP32 IP: $ip');
     } catch (e) {
       print('⚠️ Failed to cache IP: $e');
@@ -78,7 +101,8 @@ class CameraService {
         final sevenDaysInMs = 7 * 24 * 60 * 60 * 1000;
 
         if (cacheAge < sevenDaysInMs) {
-          print('📦 Found cached IP: $cachedIP');
+          print(
+              '📦 Found cached IP: $cachedIP (age: ${(cacheAge / 3600000).toStringAsFixed(1)}h)');
           return cachedIP;
         } else {
           print('⏰ Cached IP expired');
@@ -90,147 +114,327 @@ class CameraService {
     return null;
   }
 
-  Future<void> setDiscoveredIP(String ip) async {
-    await _cacheDeviceIP(ip);
+  Future<List<String>> _getKnownIPs() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final knownIPs = prefs.getStringList('esp32_known_ips') ?? [];
 
-    final device = ESP32Device(
-      ipAddress: ip,
-      deviceName: 'RoadSafe AI - ESP32-CAM',
-      isConnected: false,
-    );
+      // Always include ESP32 AP mode default
+      const defaultAP = '192.168.4.1';
+      if (!knownIPs.contains(defaultAP)) {
+        knownIPs.add(defaultAP);
+      }
 
-    await connectToDevice(device);
-    print('✅ Saved and connected to IP: $ip');
-  }
-
-  Future<bool> quickConnect() async {
-    print('\n⚡ Attempting quick connect...');
-
-    final cachedIP = await _getCachedDeviceIP();
-    if (cachedIP == null) {
-      print('❌ No cached IP available');
-      return false;
+      return knownIPs;
+    } catch (e) {
+      print('⚠️ Failed to get known IPs: $e');
+      return ['192.168.4.1'];
     }
-
-    final device = await _checkESP32Device(cachedIP);
-    if (device != null) {
-      print('✅ Quick connect successful!');
-      return await connectToDevice(device);
-    }
-
-    print('❌ Quick connect failed - device not responding');
-    return false;
   }
 
   // ============================================
-  // DEVICE DISCOVERY
+  // IMPROVED DEVICE DETECTION
+  // ============================================
+
+  Future<ESP32Device?> _checkESP32Device(String ipAddress,
+      {Duration timeout = const Duration(seconds: 8)}) async {
+    try {
+      print('  🔍 Checking $ipAddress...');
+
+      // Try multiple endpoints with LONGER timeout
+      final endpoints = ['/stream', '/status', '/'];
+
+      for (String endpoint in endpoints) {
+        try {
+          final response = await http.get(
+            Uri.parse('http://$ipAddress$endpoint'),
+            headers: {
+              'Connection': 'close',
+              'User-Agent': 'RoadSafeAI/1.0',
+            },
+          ).timeout(timeout); // INCREASED from 2s to 8s
+
+          if (response.statusCode == 200) {
+            final body = response.body.toLowerCase();
+            final server = response.headers['server']?.toLowerCase() ?? '';
+            final contentType =
+                response.headers['content-type']?.toLowerCase() ?? '';
+
+            bool isESP32 = false;
+            String detectionMethod = '';
+
+            // Detection method 1: Server header
+            if (server.contains('esp32')) {
+              isESP32 = true;
+              detectionMethod = 'server header';
+            }
+
+            // Detection method 2: Content-type for stream
+            if (endpoint == '/stream' &&
+                contentType.contains('multipart/x-mixed-replace')) {
+              isESP32 = true;
+              detectionMethod = 'stream endpoint';
+            }
+
+            // Detection method 3: HTML content analysis
+            if (body.contains('roadsafe') ||
+                body.contains('esp32-cam') ||
+                body.contains('esp32cam') ||
+                body.contains('drowsiness')) {
+              isESP32 = true;
+              detectionMethod = 'content match';
+            }
+
+            // Detection method 4: Camera-specific keywords
+            if (body.contains('camera') &&
+                (body.contains('stream') ||
+                    body.contains('live') ||
+                    body.contains('mjpeg'))) {
+              isESP32 = true;
+              detectionMethod = 'camera keywords';
+            }
+
+            if (isESP32) {
+              print('  ✅ ESP32-CAM FOUND at $ipAddress via $detectionMethod');
+              return ESP32Device(
+                ipAddress: ipAddress,
+                deviceName: 'RoadSafe AI - ESP32-CAM',
+                isConnected: false,
+                lastSeen: DateTime.now(),
+              );
+            }
+          }
+        } catch (e) {
+          // Timeout or connection refused - continue to next endpoint
+          continue;
+        }
+      }
+
+      // Additional check: Try HEAD request to /stream as final verification
+      try {
+        final streamCheck = await http
+            .head(
+              Uri.parse('http://$ipAddress/stream'),
+            )
+            .timeout(const Duration(seconds: 3));
+
+        if (streamCheck.statusCode == 200) {
+          final contentType =
+              streamCheck.headers['content-type']?.toLowerCase() ?? '';
+          if (contentType.contains('multipart') ||
+              contentType.contains('mjpeg')) {
+            print('  ✅ ESP32-CAM FOUND at $ipAddress via stream HEAD check');
+            return ESP32Device(
+              ipAddress: ipAddress,
+              deviceName: 'RoadSafe AI - ESP32-CAM',
+              isConnected: false,
+              lastSeen: DateTime.now(),
+            );
+          }
+        }
+      } catch (_) {}
+    } catch (e) {
+      // Timeout or network error
+    }
+
+    return null;
+  }
+
+  // ============================================
+  // SMART MULTI-PHASE SCANNING
   // ============================================
 
   Future<List<ESP32Device>> scanForDevices() async {
-    print('\n🔍 ========== STARTING ESP32-CAM SCAN ==========');
+    if (_isScanning) {
+      print('⚠️ Scan already in progress');
+      return [];
+    }
+
+    _isScanning = true;
+    _updateStatus('Starting device scan...');
+
+    print('\n🔍 ========== SMART ESP32-CAM SCAN ==========');
 
     List<ESP32Device> foundDevices = [];
 
-    // STEP 1: Try cached IP first
-    print('🔍 Step 1: Checking cached IP...');
-    final cachedIP = await _getCachedDeviceIP();
-    if (cachedIP != null) {
-      final device = await _checkESP32Device(cachedIP);
-      if (device != null) {
-        foundDevices.add(device);
+    try {
+      // ===== PHASE 1: INSTANT - Cached IP (should be <1s) =====
+      _updateStatus('Checking cached connection...');
+      print('📱 PHASE 1: Quick Connect (cached IP)');
+
+      final cachedIP = await _getCachedDeviceIP();
+      if (cachedIP != null) {
+        final device = await _checkESP32Device(cachedIP);
+        if (device != null) {
+          foundDevices.add(device);
+          _devicesController.add(foundDevices);
+          _updateStatus('Device found!');
+          print('✅ PHASE 1 SUCCESS: Found at cached IP $cachedIP');
+          _isScanning = false;
+          return foundDevices;
+        } else {
+          print('⚠️ Cached IP no longer valid');
+        }
+      }
+
+      // ===== PHASE 2: FAST - Known IPs (should be <5s) =====
+      _updateStatus('Scanning known locations...');
+      print('\n📱 PHASE 2: Known IPs Check');
+
+      final knownIPs = await _getKnownIPs();
+      print('  Checking ${knownIPs.length} known IPs: $knownIPs');
+
+      // Check all known IPs in parallel
+      final results = await Future.wait(
+        knownIPs.map((ip) => _checkESP32Device(ip)),
+        eagerError: false,
+      );
+
+      for (var device in results) {
+        if (device != null &&
+            !foundDevices.any((d) => d.ipAddress == device.ipAddress)) {
+          foundDevices.add(device);
+          print('✅ Found at known IP: ${device.ipAddress}');
+        }
+      }
+
+      if (foundDevices.isNotEmpty) {
         _devicesController.add(foundDevices);
-        _startPeriodicScan(foundDevices);
-        print('✅ Found device at cached IP: $cachedIP');
+        _updateStatus('Device found!');
+        print('✅ PHASE 2 SUCCESS: ${foundDevices.length} device(s) found');
+        _isScanning = false;
         return foundDevices;
       }
-    }
 
-    // STEP 2: Try known IPs
-    print('🔍 Step 2: Checking known IPs...');
-    final knownIPs = await scanKnownIPs();
-    if (knownIPs.isNotEmpty) {
-      foundDevices.addAll(knownIPs);
-      _devicesController.add(foundDevices);
-      _startPeriodicScan(foundDevices);
-      print('✅ Found ${knownIPs.length} device(s) in known IPs');
-      return foundDevices;
-    }
+      // ===== PHASE 3: MEDIUM - Current Network Scan (should be <15s) =====
+      _updateStatus('Scanning your network...');
+      print('\n📱 PHASE 3: Current Network Scan');
 
-    // STEP 3: Scan current network
-    print('🔍 Step 3: Scanning current network...');
-    final currentNetwork = await _getLocalNetworkBase();
-    if (currentNetwork != null) {
-      print('🌐 Current network: $currentNetwork.x');
-      final networkDevices = await _scanNetworkRange(currentNetwork);
-      foundDevices.addAll(networkDevices);
+      final currentNetwork = await _getLocalNetworkBase();
+      if (currentNetwork != null) {
+        print('🌐 Current network: $currentNetwork.x');
 
-      if (networkDevices.isNotEmpty) {
-        _devicesController.add(foundDevices);
-        _startPeriodicScan(foundDevices);
-        return foundDevices;
+        // Scan priority IPs first (common camera IPs)
+        final priorityIPs = [1, 59, 100, 101, 102, 42, 17, 200, 254];
+        print('  Scanning ${priorityIPs.length} priority IPs first...');
+
+        final priorityResults = await Future.wait(
+          priorityIPs.map((ip) => _checkESP32Device('$currentNetwork.$ip')),
+          eagerError: false,
+        );
+
+        for (var device in priorityResults) {
+          if (device != null &&
+              !foundDevices.any((d) => d.ipAddress == device.ipAddress)) {
+            foundDevices.add(device);
+            print('✅ Found at priority IP: ${device.ipAddress}');
+          }
+        }
+
+        if (foundDevices.isNotEmpty) {
+          _devicesController.add(foundDevices);
+          _updateStatus('Device found!');
+          print('✅ PHASE 3 SUCCESS: ${foundDevices.length} device(s) found');
+          _isScanning = false;
+          return foundDevices;
+        }
+
+        // If still not found, scan more IPs (10-50, 60-99, 103-150)
+        print('  Expanding search to more IPs...');
+        _updateStatus('Deep scanning network...');
+
+        final extendedIPs = [
+          ...List.generate(41, (i) => i + 10), // 10-50
+          ...List.generate(40, (i) => i + 60), // 60-99
+          ...List.generate(48, (i) => i + 103), // 103-150
+        ];
+
+        // Scan in batches of 20 to avoid overwhelming the network
+        for (int i = 0; i < extendedIPs.length; i += 20) {
+          final batch = extendedIPs.skip(i).take(20).toList();
+
+          final batchResults = await Future.wait(
+            batch.map((ip) => _checkESP32Device('$currentNetwork.$ip',
+                timeout: Duration(seconds: 3))),
+            eagerError: false,
+          );
+
+          for (var device in batchResults) {
+            if (device != null &&
+                !foundDevices.any((d) => d.ipAddress == device.ipAddress)) {
+              foundDevices.add(device);
+              print('✅ Found at extended IP: ${device.ipAddress}');
+              _devicesController.add(foundDevices);
+              _updateStatus('Device found!');
+              _isScanning = false;
+              return foundDevices;
+            }
+          }
+        }
       }
-    }
 
-    // STEP 4: Scan common ranges
-    print('🔍 Step 4: Scanning common ranges...');
-    final commonRanges = [
-      '192.168.1',
-      '192.168.0',
-      '192.168.4',
-      '10.0.0',
-      '10.251.96',
-      '10.19.80',
-      '172.17.131',
-    ];
+      // ===== PHASE 4: SLOW - Common Router Networks (optional) =====
+      if (foundDevices.isEmpty) {
+        print('\n📱 PHASE 4: Common Networks Scan (last resort)');
+        _updateStatus('Scanning common networks...');
 
-    for (String range in commonRanges) {
-      if (currentNetwork != null && range == currentNetwork) continue;
+        final commonNetworks = [
+          '192.168.1',
+          '192.168.0',
+          '192.168.4', // ESP32 AP mode
+          '10.0.0',
+        ];
 
-      print('🔍 Scanning $range.x...');
-      final rangeDevices = await _scanNetworkRange(range);
-      if (rangeDevices.isNotEmpty) {
-        foundDevices.addAll(rangeDevices);
-        break;
+        // Remove current network from common networks to avoid duplicates
+        if (currentNetwork != null) {
+          commonNetworks.removeWhere((network) => network == currentNetwork);
+        }
+
+        for (String network in commonNetworks) {
+          print('  Checking common network: $network.x');
+
+          // Only check priority IPs for common networks (to save time)
+          final priorityIPs = [1, 4, 59, 100, 101];
+
+          final results = await Future.wait(
+            priorityIPs.map((ip) => _checkESP32Device('$network.$ip',
+                timeout: Duration(seconds: 4))),
+            eagerError: false,
+          );
+
+          for (var device in results) {
+            if (device != null &&
+                !foundDevices.any((d) => d.ipAddress == device.ipAddress)) {
+              foundDevices.add(device);
+              print('✅ Found at common network IP: ${device.ipAddress}');
+              _devicesController.add(foundDevices);
+              _updateStatus('Device found!');
+              _isScanning = false;
+              return foundDevices;
+            }
+          }
+        }
       }
+    } catch (e) {
+      print('❌ Scan error: $e');
+      _updateStatus('Scan error: $e');
+    } finally {
+      _isScanning = false;
     }
 
     _devicesController.add(foundDevices);
-    if (foundDevices.isNotEmpty) {
-      _startPeriodicScan(foundDevices);
+
+    if (foundDevices.isEmpty) {
+      _updateStatus('No devices found');
+      print('❌ SCAN COMPLETE: No ESP32-CAM devices found');
+      print('=========================================\n');
+    } else {
+      _updateStatus('${foundDevices.length} device(s) found');
+      print('✅ SCAN COMPLETE: ${foundDevices.length} device(s) found');
+      print('=========================================\n');
     }
 
-    print('🎉 Scan complete: ${foundDevices.length} devices found\n');
     return foundDevices;
-  }
-
-  Future<List<ESP32Device>> scanKnownIPs() async {
-    List<String> knownIPs = [
-      '192.168.4.1',
-      '192.168.1.59',
-      '10.251.96.17',
-      '10.19.80.42',
-      '192.168.1.100',
-      '192.168.1.101',
-      '192.168.0.100',
-    ];
-
-    List<ESP32Device> devices = [];
-
-    print('  Checking ${knownIPs.length} known IPs...');
-
-    final results = await Future.wait(
-      knownIPs.map((ip) => _checkESP32Device(ip)),
-      eagerError: false,
-    );
-
-    for (var device in results) {
-      if (device != null) {
-        devices.add(device);
-        print('  ✅ ESP32-CAM found at ${device.ipAddress}');
-      }
-    }
-
-    return devices;
   }
 
   Future<String?> _getLocalNetworkBase() async {
@@ -238,7 +442,7 @@ class CameraService {
       final info = NetworkInfo();
       final wifiIP = await info.getWifiIP();
 
-      if (wifiIP != null && wifiIP.isNotEmpty) {
+      if (wifiIP != null && wifiIP.isNotEmpty && wifiIP != '0.0.0.0') {
         print('📱 Device IP: $wifiIP');
         final parts = wifiIP.split('.');
         if (parts.length == 4) {
@@ -251,149 +455,146 @@ class CameraService {
     return null;
   }
 
-  Future<List<ESP32Device>> _scanNetworkRange(String networkBase) async {
-    List<ESP32Device> devices = [];
-    List<int> priorityIPs = [1, 17, 42, 59, 100, 101, 102, 200, 254];
-
-    print('  Scanning priority IPs in $networkBase.x...');
-
-    final results = await Future.wait(
-      priorityIPs.map((ip) => _checkESP32Device('$networkBase.$ip')),
-      eagerError: false,
-    );
-
-    for (var device in results) {
-      if (device != null) {
-        devices.add(device);
-        print('  ✅ ESP32-CAM found at ${device.ipAddress}');
-        return devices;
-      }
-    }
-
-    return devices;
-  }
-
-  Future<ESP32Device?> _checkESP32Device(String ipAddress) async {
-    try {
-      final endpoints = ['/', '/stream'];
-
-      for (String endpoint in endpoints) {
-        try {
-          final response = await http.get(
-            Uri.parse('http://$ipAddress$endpoint'),
-            headers: {'Connection': 'close'},
-          ).timeout(const Duration(seconds: 2));
-
-          if (response.statusCode == 200) {
-            final body = response.body.toLowerCase();
-            final server = response.headers['server']?.toLowerCase() ?? '';
-
-            bool isESP32 = false;
-
-            if (server.contains('esp32')) {
-              isESP32 = true;
-              print('  ✓ $ipAddress - Found via server header');
-            }
-
-            if (body.contains('roadsafe') ||
-                body.contains('roadSafe') ||
-                body.contains('drowsiness') ||
-                body.contains('esp32-cam') ||
-                body.contains('esp32cam')) {
-              isESP32 = true;
-              print('  ✓ $ipAddress - Found via RoadSafe content');
-            }
-
-            if (body.contains('camera') &&
-                (body.contains('stream') || body.contains('live'))) {
-              isESP32 = true;
-              print('  ✓ $ipAddress - Found via camera/stream content');
-            }
-
-            if (!isESP32 && endpoint == '/') {
-              try {
-                final streamCheck = await http
-                    .head(
-                      Uri.parse('http://$ipAddress/stream'),
-                    )
-                    .timeout(const Duration(seconds: 1));
-
-                if (streamCheck.statusCode == 200) {
-                  isESP32 = true;
-                  print('  ✓ $ipAddress - Found via /stream endpoint');
-                }
-              } catch (_) {}
-            }
-
-            if (isESP32) {
-              print('✅ ESP32-CAM identified at $ipAddress');
-              return ESP32Device(
-                ipAddress: ipAddress,
-                deviceName: 'RoadSafe AI - ESP32-CAM',
-                isConnected: false,
-              );
-            }
-          }
-        } catch (_) {
-          continue;
-        }
-      }
-    } catch (_) {}
-
-    return null;
-  }
-
   // ============================================
-  // CONNECTION MANAGEMENT
+  // IMPROVED CONNECTION MANAGEMENT
   // ============================================
 
   Future<bool> connectToDevice(ESP32Device device) async {
     try {
-      print('\n🔗 Connecting to ESP32-CAM at ${device.ipAddress}...');
+      print('\n🔗 ========== CONNECTING TO ESP32-CAM ==========');
+      print('IP Address: ${device.ipAddress}');
+      print('Device Name: ${device.deviceName}');
 
-      final response = await http
+      _updateStatus('Connecting to ${device.ipAddress}...');
+
+      // Step 1: Verify basic connectivity with LONGER timeout
+      print('Step 1: Testing basic connectivity...');
+      final basicTest = await http
           .get(
             Uri.parse('http://${device.ipAddress}/'),
           )
-          .timeout(const Duration(seconds: 5));
+          .timeout(const Duration(seconds: 10)); // INCREASED from 5s to 10s
 
-      if (response.statusCode == 200) {
-        print('✅ Connection OK');
-
-        try {
-          final streamTest = await http
-              .head(
-                Uri.parse('http://${device.ipAddress}/stream'),
-              )
-              .timeout(const Duration(seconds: 3));
-
-          if (streamTest.statusCode == 200) {
-            print('✅ Stream endpoint OK');
-          }
-        } catch (e) {
-          print('⚠️ Stream endpoint check failed: $e');
-        }
-
-        _connectedDevice = device.copyWith(isConnected: true);
-        await _cacheDeviceIP(device.ipAddress);
-        _connectionController.add(true);
-        print('✅ Successfully connected to ESP32-CAM!');
-        print('📹 Stream URL: $streamUrl');
-        return true;
+      if (basicTest.statusCode != 200) {
+        throw Exception('Basic connectivity failed: ${basicTest.statusCode}');
       }
+      print('✅ Basic connectivity OK');
+
+      // Step 2: Verify stream endpoint
+      print('Step 2: Verifying stream endpoint...');
+      final streamTest = await http
+          .head(
+            Uri.parse('http://${device.ipAddress}/stream'),
+          )
+          .timeout(const Duration(seconds: 8));
+
+      if (streamTest.statusCode != 200) {
+        print('⚠️ Stream endpoint returned: ${streamTest.statusCode}');
+        // Don't fail completely, stream might work anyway
+      } else {
+        print('✅ Stream endpoint OK');
+      }
+
+      // Step 3: Test actual stream data
+      print('Step 3: Testing stream data...');
+      bool streamDataValid = await _testStreamData(device.ipAddress);
+
+      if (!streamDataValid) {
+        print('⚠️ Stream data test inconclusive, proceeding anyway');
+      } else {
+        print('✅ Stream data validated');
+      }
+
+      // Success - update state
+      _connectedDevice =
+          device.copyWith(isConnected: true, lastSeen: DateTime.now());
+      await _cacheDeviceIP(device.ipAddress);
+      _connectionController.add(true);
+      _updateStatus('Connected successfully!');
+
+      print('✅ ========== CONNECTION SUCCESSFUL ==========');
+      print('📹 Stream URL: $streamUrl');
+      print('===============================================\n');
+
+      // Start connection watchdog
+      _startConnectionWatchdog();
+
+      return true;
     } catch (e) {
       print('❌ Connection failed: $e');
+      _connectionController.add(false);
+      _updateStatus('Connection failed: $e');
+      return false;
     }
-
-    _connectionController.add(false);
-    return false;
   }
 
-  void disconnect() {
-    _connectedDevice = null;
-    _connectionController.add(false);
-    _stopPeriodicScan();
-    print('🔌 Disconnected from ESP32-CAM');
+  Future<bool> _testStreamData(String ipAddress) async {
+    try {
+      final request =
+          http.Request('GET', Uri.parse('http://$ipAddress/stream'));
+      final client = http.Client();
+      final response =
+          await client.send(request).timeout(const Duration(seconds: 5));
+
+      if (response.statusCode != 200) {
+        client.close();
+        return false;
+      }
+
+      // Read first few bytes to verify it's actual MJPEG data
+      bool foundJPEGMarker = false;
+      final subscription = response.stream.listen(
+        (chunk) {
+          // Look for JPEG start marker (0xFFD8)
+          for (int i = 0; i < chunk.length - 1; i++) {
+            if (chunk[i] == 0xFF && chunk[i + 1] == 0xD8) {
+              foundJPEGMarker = true;
+              break;
+            }
+          }
+        },
+        cancelOnError: true,
+      );
+
+      // Wait up to 3 seconds for JPEG marker
+      await Future.delayed(const Duration(seconds: 3));
+      await subscription.cancel();
+      client.close();
+
+      return foundJPEGMarker;
+    } catch (e) {
+      print('⚠️ Stream data test error: $e');
+      return false;
+    }
+  }
+
+  // Connection watchdog to detect disconnections
+  void _startConnectionWatchdog() {
+    _connectionWatchdog?.cancel();
+
+    _connectionWatchdog = Timer.periodic(
+      const Duration(seconds: 15),
+      (timer) async {
+        if (_connectedDevice != null) {
+          final isStillConnected = await testConnection();
+
+          if (!isStillConnected) {
+            print('⚠️ Connection lost to ${_connectedDevice!.ipAddress}');
+            _updateStatus('Connection lost - attempting to reconnect...');
+
+            // Try to reconnect
+            final reconnected = await connectToDevice(_connectedDevice!);
+
+            if (!reconnected) {
+              print('❌ Reconnection failed');
+              disconnect();
+            }
+          }
+        } else {
+          timer.cancel();
+        }
+      },
+    );
   }
 
   Future<bool> testConnection() async {
@@ -401,63 +602,69 @@ class CameraService {
 
     try {
       final response = await http
-          .get(
+          .head(
             Uri.parse('http://${_connectedDevice!.ipAddress}/'),
           )
           .timeout(const Duration(seconds: 5));
 
       return response.statusCode == 200;
     } catch (e) {
-      print('⚠️ Connection test failed: $e');
       return false;
     }
   }
 
-  void _startPeriodicScan(List<ESP32Device> knownDevices) {
-    _stopPeriodicScan();
-    _isPeriodicScanEnabled = true;
-
-    _periodicScanTimer = Timer.periodic(
-      const Duration(seconds: 10),
-      (timer) async {
-        if (!_isPeriodicScanEnabled) {
-          timer.cancel();
-          return;
-        }
-
-        List<ESP32Device> activeDevices = [];
-
-        for (ESP32Device device in knownDevices) {
-          final activeDevice = await _checkESP32Device(device.ipAddress);
-          if (activeDevice != null) {
-            activeDevices.add(activeDevice);
-          }
-        }
-
-        if (activeDevices.isEmpty) {
-          final cachedIP = await _getCachedDeviceIP();
-          if (cachedIP != null) {
-            final device = await _checkESP32Device(cachedIP);
-            if (device != null) {
-              activeDevices.add(device);
-            }
-          }
-        }
-
-        _devicesController.add(activeDevices);
-      },
-    );
+  void disconnect() {
+    print('🔌 Disconnecting from ESP32-CAM');
+    _connectedDevice = null;
+    _connectionController.add(false);
+    _connectionWatchdog?.cancel();
+    _updateStatus('Disconnected');
   }
 
-  void _stopPeriodicScan() {
-    _isPeriodicScanEnabled = false;
-    _periodicScanTimer?.cancel();
-    _periodicScanTimer = null;
+  // ============================================
+  // MANUAL IP CONNECTION (for troubleshooting)
+  // ============================================
+
+  Future<bool> connectToIP(String ipAddress) async {
+    print('\n🔗 Manual connection to $ipAddress');
+    _updateStatus('Testing connection to $ipAddress...');
+
+    final device = await _checkESP32Device(ipAddress);
+
+    if (device != null) {
+      return await connectToDevice(device);
+    } else {
+      print('❌ No ESP32-CAM found at $ipAddress');
+      _updateStatus('No device found at $ipAddress');
+      return false;
+    }
+  }
+
+  // ============================================
+  // UTILITY METHODS
+  // ============================================
+
+  void _updateStatus(String status) {
+    print('📊 Status: $status');
+    _statusController.add(status);
+  }
+
+  Future<void> clearCache() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('esp32_last_ip');
+      await prefs.remove('esp32_known_ips');
+      await prefs.remove('esp32_last_connection');
+      print('✅ Cache cleared');
+    } catch (e) {
+      print('⚠️ Failed to clear cache: $e');
+    }
   }
 
   void dispose() {
-    _stopPeriodicScan();
+    _connectionWatchdog?.cancel();
     _devicesController.close();
     _connectionController.close();
+    _statusController.close();
   }
 }

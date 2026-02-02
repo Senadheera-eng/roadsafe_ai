@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:flutter/foundation.dart';
 import '../models/trip_session.dart';
 
 class AnalyticsService {
@@ -8,113 +9,222 @@ class AnalyticsService {
 
   String get _userId => _auth.currentUser?.uid ?? '';
 
-  // Get all trips for current user (SIMPLIFIED - NO ORDERING)
-  Stream<List<TripSession>> getTripsStream() {
-    print('📊 [STREAM] Getting trips for user: $_userId');
+  // ============================================
+  // TRIP MANAGEMENT
+  // ============================================
+
+  /// Get trips stream with PROPER INDEXING
+  ///
+  /// IMPORTANT: This query requires a composite index in Firestore:
+  /// Collection: trips
+  /// Fields indexed: userId (Ascending), startTime (Descending)
+  ///
+  /// Create the index by:
+  /// 1. Firebase Console → Firestore → Indexes
+  /// 2. Click "Create Index"
+  /// 3. Or use the error link from console when query fails
+  Stream<List<TripSession>> getTripsStream({int limit = 50}) {
+    if (kDebugMode) print('📊 [STREAM] Getting trips for user: $_userId');
 
     if (_userId.isEmpty) {
-      print('⚠️ [STREAM] No user logged in');
+      if (kDebugMode) print('⚠️ [STREAM] No user logged in');
       return Stream.value([]);
     }
 
     return _firestore
         .collection('trips')
         .where('userId', isEqualTo: _userId)
+        .orderBy('startTime', descending: true) // REQUIRES INDEX!
+        .limit(limit)
         .snapshots()
         .map((snapshot) {
-      print('📊 [STREAM] Received ${snapshot.docs.length} trips');
+      if (kDebugMode) {
+        print('📊 [STREAM] Received ${snapshot.docs.length} trips');
+      }
 
       final trips = snapshot.docs
           .map((doc) {
             try {
               final trip = TripSession.fromFirestore(doc);
-              print(
-                  '  ✅ Trip ${doc.id}: ${trip.alertCount} alerts, score: ${trip.safetyScore}');
+              if (kDebugMode) {
+                print('  ✅ Trip ${doc.id}: ${trip.alertCount} alerts, '
+                    'score: ${trip.safetyScore}');
+              }
               return trip;
             } catch (e) {
-              print('  ❌ Error parsing trip ${doc.id}: $e');
+              if (kDebugMode) print('  ❌ Error parsing trip ${doc.id}: $e');
               return null;
             }
           })
           .whereType<TripSession>()
           .toList();
 
-      // Sort by start time (newest first)
-      trips.sort((a, b) => b.startTime.compareTo(a.startTime));
-
-      print('📊 [STREAM] Returning ${trips.length} valid trips');
+      if (kDebugMode)
+        print('📊 [STREAM] Returning ${trips.length} valid trips');
       return trips;
+    }).handleError((error) {
+      if (kDebugMode) {
+        print('❌ [STREAM] Error: $error');
+
+        if (error.toString().contains('index')) {
+          print('');
+          print('🚨 FIRESTORE INDEX REQUIRED!');
+          print('═══════════════════════════════════════');
+          print('Create a composite index for this query:');
+          print('  Collection: trips');
+          print('  Fields:');
+          print('    - userId: Ascending');
+          print('    - startTime: Descending');
+          print('');
+          print('Steps:');
+          print('1. Go to Firebase Console');
+          print('2. Firestore Database → Indexes');
+          print('3. Click the link in the error message');
+          print('   OR manually create the index');
+          print('═══════════════════════════════════════');
+          print('');
+        }
+      }
+
+      return Stream.value(<TripSession>[]);
     });
   }
 
-  // Get analytics summary (SIMPLIFIED - NO ORDERING)
+  /// Get analytics summary (optimized version)
   Future<AnalyticsSummary> getAnalyticsSummary() async {
-    print('\n========================================');
-    print('📊 [SUMMARY] Getting analytics summary');
-    print('📊 [SUMMARY] User ID: $_userId');
-    print('========================================');
+    if (kDebugMode) {
+      print('\n========================================');
+      print('📊 [SUMMARY] Getting analytics summary');
+      print('📊 [SUMMARY] User ID: $_userId');
+      print('========================================');
+    }
 
     if (_userId.isEmpty) {
-      print('⚠️ [SUMMARY] No user logged in');
+      if (kDebugMode) print('⚠️ [SUMMARY] No user logged in');
       return _getEmptySummary();
     }
 
     try {
-      // Get ALL trips for this user (no ordering to avoid index issues)
-      final tripsSnapshot = await _firestore
+      // Get only recent trips (last 30 days) for performance
+      final thirtyDaysAgo = DateTime.now().subtract(const Duration(days: 30));
+      final thirtyDaysTimestamp = Timestamp.fromDate(thirtyDaysAgo);
+
+      // Query 1: Recent trips (with index)
+      final recentTripsSnapshot = await _firestore
           .collection('trips')
           .where('userId', isEqualTo: _userId)
+          .where('startTime', isGreaterThanOrEqualTo: thirtyDaysTimestamp)
+          .orderBy('startTime', descending: true)
+          .limit(100)
           .get();
 
-      print(
-          '📊 [SUMMARY] Found ${tripsSnapshot.docs.length} trips in Firestore');
-
-      if (tripsSnapshot.docs.isEmpty) {
-        print('⚠️ [SUMMARY] No trips found for user');
-        return _getEmptySummary();
+      if (kDebugMode) {
+        print(
+            '📊 [SUMMARY] Found ${recentTripsSnapshot.docs.length} recent trips');
       }
 
-      // Parse trips
-      final sessions = <TripSession>[];
-      for (var doc in tripsSnapshot.docs) {
-        try {
-          final trip = TripSession.fromFirestore(doc);
-          sessions.add(trip);
+      if (recentTripsSnapshot.docs.isEmpty) {
+        // No recent trips, try getting all trips (fallback)
+        if (kDebugMode)
+          print('📊 [SUMMARY] No recent trips, fetching all trips...');
+
+        final allTripsSnapshot = await _firestore
+            .collection('trips')
+            .where('userId', isEqualTo: _userId)
+            .limit(100)
+            .get();
+
+        if (allTripsSnapshot.docs.isEmpty) {
+          if (kDebugMode) print('⚠️ [SUMMARY] No trips found for user');
+          return _getEmptySummary();
+        }
+
+        return _calculateSummaryFromSnapshot(allTripsSnapshot);
+      }
+
+      // Get aggregated stats (if you implement Cloud Functions)
+      // This is optional but recommended for production
+      DocumentSnapshot? statsDoc;
+      try {
+        statsDoc = await _firestore
+            .collection('user_stats')
+            .doc(_userId)
+            .get()
+            .timeout(const Duration(seconds: 3));
+      } catch (e) {
+        if (kDebugMode) print('⚠️ [SUMMARY] Could not get cached stats: $e');
+      }
+
+      return _calculateSummaryFromSnapshot(
+        recentTripsSnapshot,
+        cachedStats: statsDoc?.data() as Map<String, dynamic>?,
+      );
+    } catch (e, stackTrace) {
+      if (kDebugMode) {
+        print('❌ [SUMMARY] Error: $e');
+        print('Stack trace: $stackTrace');
+      }
+      return _getEmptySummary();
+    }
+  }
+
+  /// Calculate summary from Firestore snapshot
+  AnalyticsSummary _calculateSummaryFromSnapshot(
+    QuerySnapshot snapshot, {
+    Map<String, dynamic>? cachedStats,
+  }) {
+    // Parse all trips
+    final sessions = <TripSession>[];
+    for (var doc in snapshot.docs) {
+      try {
+        final trip = TripSession.fromFirestore(doc);
+        sessions.add(trip);
+
+        if (kDebugMode) {
           print('  ✅ Parsed trip ${doc.id}:');
           print('     - Start: ${trip.startTime}');
           print('     - Duration: ${trip.durationMinutes} min');
           print('     - Alerts: ${trip.alertCount}');
           print('     - Score: ${trip.safetyScore}');
-        } catch (e) {
-          print('  ❌ Error parsing trip ${doc.id}: $e');
         }
+      } catch (e) {
+        if (kDebugMode) print('  ❌ Error parsing trip ${doc.id}: $e');
       }
+    }
 
-      if (sessions.isEmpty) {
-        print('⚠️ [SUMMARY] No valid sessions after parsing');
-        return _getEmptySummary();
-      }
+    if (sessions.isEmpty) {
+      if (kDebugMode) print('⚠️ [SUMMARY] No valid sessions after parsing');
+      return _getEmptySummary();
+    }
 
-      // Sort by start time (newest first)
-      sessions.sort((a, b) => b.startTime.compareTo(a.startTime));
-
+    // Sessions are already sorted by Firestore query (descending startTime)
+    if (kDebugMode) {
       print(
           '📊 [SUMMARY] Calculating metrics from ${sessions.length} sessions...');
+    }
 
-      // Calculate metrics
-      int totalTrips = sessions.length;
-      int totalMinutes =
-          sessions.fold(0, (sum, trip) => sum + trip.durationMinutes);
-      int totalAlerts = sessions.fold(0, (sum, trip) => sum + trip.alertCount);
-      double avgScore =
-          sessions.fold(0.0, (sum, trip) => sum + trip.safetyScore) /
-              totalTrips;
+    // Calculate metrics
+    int totalTrips = cachedStats?['totalTrips'] ?? sessions.length;
+    int totalMinutes =
+        sessions.fold(0, (sum, trip) => sum + trip.durationMinutes);
+    int totalAlerts = sessions.fold(0, (sum, trip) => sum + trip.alertCount);
+    double avgScore =
+        sessions.fold(0.0, (sum, trip) => sum + trip.safetyScore) /
+            sessions.length;
 
-      int currentStreak = _calculateCurrentStreak(sessions);
-      int longestStreak = _calculateLongestStreak(sessions);
-      Map<String, int> alertsByTime = _calculateAlertsByTime(sessions);
-      double weeklyImprovement = _calculateWeeklyImprovement(sessions);
+    // Use cached values if available for all-time stats
+    if (cachedStats != null) {
+      totalTrips = cachedStats['totalTrips'] ?? totalTrips;
+      // totalMinutes and totalAlerts are from recent trips only
+    }
 
+    int currentStreak = _calculateCurrentStreak(sessions);
+    int longestStreak =
+        cachedStats?['longestStreak'] ?? _calculateLongestStreak(sessions);
+    Map<String, int> alertsByTime = _calculateAlertsByTime(sessions);
+    double weeklyImprovement = _calculateWeeklyImprovement(sessions);
+
+    if (kDebugMode) {
       print('📊 [SUMMARY] Metrics calculated:');
       print('   - Total trips: $totalTrips');
       print('   - Total minutes: $totalMinutes');
@@ -125,27 +235,23 @@ class AnalyticsService {
       print(
           '   - Weekly improvement: ${weeklyImprovement.toStringAsFixed(1)}%');
       print('========================================\n');
-
-      return AnalyticsSummary(
-        totalTrips: totalTrips,
-        totalDrivingMinutes: totalMinutes,
-        totalAlerts: totalAlerts,
-        averageSafetyScore: avgScore,
-        currentStreak: currentStreak,
-        longestStreak: longestStreak,
-        alertsByTimeOfDay: alertsByTime,
-        recentTrips: sessions.take(10).toList(),
-        weeklyImprovement: weeklyImprovement,
-      );
-    } catch (e, stackTrace) {
-      print('❌ [SUMMARY] Error: $e');
-      print('Stack trace: $stackTrace');
-      return _getEmptySummary();
     }
+
+    return AnalyticsSummary(
+      totalTrips: totalTrips,
+      totalDrivingMinutes: totalMinutes,
+      totalAlerts: totalAlerts,
+      averageSafetyScore: avgScore,
+      currentStreak: currentStreak,
+      longestStreak: longestStreak,
+      alertsByTimeOfDay: alertsByTime,
+      recentTrips: sessions.take(10).toList(),
+      weeklyImprovement: weeklyImprovement,
+    );
   }
 
   AnalyticsSummary _getEmptySummary() {
-    print('📊 [SUMMARY] Returning empty summary');
+    if (kDebugMode) print('📊 [SUMMARY] Returning empty summary');
     return AnalyticsSummary(
       totalTrips: 0,
       totalDrivingMinutes: 0,
@@ -159,6 +265,171 @@ class AnalyticsService {
     );
   }
 
+  // ============================================
+  // TRIP CREATION & UPDATES (WITH BATCHING)
+  // ============================================
+
+  /// Create a new trip session
+  Future<String?> createTrip({
+    required DateTime startTime,
+    Map<String, dynamic>? metadata,
+  }) async {
+    try {
+      final docRef = await _firestore.collection('trips').add({
+        'userId': _userId,
+        'startTime': Timestamp.fromDate(startTime),
+        'endTime': null,
+        'durationMinutes': 0,
+        'totalDetections': 0,
+        'alertCount': 0,
+        'yawnCount': 0,
+        'safetyScore': 100.0,
+        'isActive': true,
+        'metadata': metadata ?? {},
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+
+      if (kDebugMode) print('✅ Created trip: ${docRef.id}');
+      return docRef.id;
+    } catch (e) {
+      if (kDebugMode) print('❌ Error creating trip: $e');
+      return null;
+    }
+  }
+
+  /// End a trip session with batch update
+  Future<bool> endTrip(
+    String tripId, {
+    required DateTime endTime,
+    required int totalDetections,
+    required int alertCount,
+    required int yawnCount,
+  }) async {
+    try {
+      final tripRef = _firestore.collection('trips').doc(tripId);
+      final tripDoc = await tripRef.get();
+
+      if (!tripDoc.exists) {
+        if (kDebugMode) print('❌ Trip not found: $tripId');
+        return false;
+      }
+
+      final tripData = tripDoc.data()!;
+      final startTime = (tripData['startTime'] as Timestamp).toDate();
+      final durationMinutes = endTime.difference(startTime).inMinutes;
+
+      // Calculate safety score
+      final safetyScore = _calculateSafetyScore(
+        durationMinutes: durationMinutes,
+        alertCount: alertCount,
+        yawnCount: yawnCount,
+      );
+
+      // Use batch write for atomic update
+      final batch = _firestore.batch();
+
+      // Update trip
+      batch.update(tripRef, {
+        'endTime': Timestamp.fromDate(endTime),
+        'durationMinutes': durationMinutes,
+        'totalDetections': totalDetections,
+        'alertCount': alertCount,
+        'yawnCount': yawnCount,
+        'safetyScore': safetyScore,
+        'isActive': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+
+      // Update user stats (optional - for caching)
+      final statsRef = _firestore.collection('user_stats').doc(_userId);
+      batch.set(
+          statsRef,
+          {
+            'userId': _userId,
+            'totalTrips': FieldValue.increment(1),
+            'totalAlerts': FieldValue.increment(alertCount),
+            'lastTripAt': Timestamp.fromDate(endTime),
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
+          SetOptions(merge: true));
+
+      await batch.commit();
+
+      if (kDebugMode) {
+        print('✅ Trip ended: $tripId');
+        print('   Duration: $durationMinutes min');
+        print('   Alerts: $alertCount');
+        print('   Safety Score: $safetyScore');
+      }
+
+      return true;
+    } catch (e) {
+      if (kDebugMode) print('❌ Error ending trip: $e');
+      return false;
+    }
+  }
+
+  /// Update active trip (for real-time updates)
+  Future<void> updateActiveTrip(
+    String tripId, {
+    int? totalDetections,
+    int? alertCount,
+    int? yawnCount,
+  }) async {
+    try {
+      final updates = <String, dynamic>{
+        'updatedAt': FieldValue.serverTimestamp(),
+      };
+
+      if (totalDetections != null) updates['totalDetections'] = totalDetections;
+      if (alertCount != null) updates['alertCount'] = alertCount;
+      if (yawnCount != null) updates['yawnCount'] = yawnCount;
+
+      await _firestore.collection('trips').doc(tripId).update(updates);
+
+      if (kDebugMode) {
+        print('✅ Updated trip $tripId: $updates');
+      }
+    } catch (e) {
+      if (kDebugMode) print('❌ Error updating trip: $e');
+    }
+  }
+
+  // ============================================
+  // CALCULATION HELPERS
+  // ============================================
+
+  double _calculateSafetyScore({
+    required int durationMinutes,
+    required int alertCount,
+    required int yawnCount,
+  }) {
+    if (durationMinutes == 0) return 100.0;
+
+    // Start with perfect score
+    double score = 100.0;
+
+    // Penalty for alerts (exponential impact)
+    double alertsPerHour = (alertCount / durationMinutes) * 60;
+    score -= alertsPerHour * 15; // -15 points per alert/hour
+
+    // Additional penalty for yawns
+    double yawnsPerHour = (yawnCount / durationMinutes) * 60;
+    score -= yawnsPerHour * 5; // -5 points per yawn/hour
+
+    // Bonus for long alert-free sessions
+    if (alertCount == 0 && durationMinutes > 30) {
+      score += 5; // +5 bonus
+    }
+
+    // Extra penalty for very high alert frequency
+    if (alertsPerHour > 5) {
+      score -= (alertsPerHour - 5) * 10; // Additional penalty
+    }
+
+    return score.clamp(0.0, 100.0);
+  }
+
   int _calculateCurrentStreak(List<TripSession> sessions) {
     int streak = 0;
     for (var trip in sessions) {
@@ -168,7 +439,7 @@ class AnalyticsService {
         break;
       }
     }
-    print('  📈 Current streak: $streak');
+    if (kDebugMode) print('  📈 Current streak: $streak');
     return streak;
   }
 
@@ -185,7 +456,7 @@ class AnalyticsService {
       }
     }
 
-    print('  📈 Longest streak: $longest');
+    if (kDebugMode) print('  📈 Longest streak: $longest');
     return longest;
   }
 
@@ -214,7 +485,7 @@ class AnalyticsService {
       result[timeOfDay] = (result[timeOfDay] ?? 0) + trip.alertCount;
     }
 
-    print('  📈 Alerts by time: $result');
+    if (kDebugMode) print('  📈 Alerts by time: $result');
     return result;
   }
 
@@ -231,7 +502,8 @@ class AnalyticsService {
         .toList();
 
     if (thisWeekTrips.isEmpty || lastWeekTrips.isEmpty) {
-      print('  📈 Weekly improvement: 0.0% (insufficient data)');
+      if (kDebugMode)
+        print('  📈 Weekly improvement: 0.0% (insufficient data)');
       return 0.0;
     }
 
@@ -245,11 +517,15 @@ class AnalyticsService {
     if (lastWeekAvg == 0) return 0.0;
 
     double improvement = ((thisWeekAvg - lastWeekAvg) / lastWeekAvg) * 100;
-    print('  📈 Weekly improvement: ${improvement.toStringAsFixed(1)}%');
+    if (kDebugMode)
+      print('  📈 Weekly improvement: ${improvement.toStringAsFixed(1)}%');
     return improvement;
   }
 
-  // Debug: Print all trips
+  // ============================================
+  // DEBUG UTILITIES
+  // ============================================
+
   Future<void> debugPrintAllTrips() async {
     print('\n=== 🔍 DEBUG: ALL TRIPS IN DATABASE ===');
     try {
@@ -274,6 +550,16 @@ class AnalyticsService {
       print('======================================\n');
     } catch (e) {
       print('❌ Debug error: $e');
+    }
+  }
+
+  /// Clear all user stats cache
+  Future<void> clearStatsCache() async {
+    try {
+      await _firestore.collection('user_stats').doc(_userId).delete();
+      if (kDebugMode) print('✅ Stats cache cleared');
+    } catch (e) {
+      if (kDebugMode) print('❌ Error clearing cache: $e');
     }
   }
 }
