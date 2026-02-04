@@ -107,58 +107,106 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     final deviceIP = _cameraService.connectedDevice?.ipAddress;
 
     if (deviceIP == null) {
-      print('⚠️ No ESP32 connected, cannot trigger alarm');
+      print('❌ No ESP32 connected, cannot trigger alarm');
+
+      // Show user notification
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('ESP32 not connected - buzzer unavailable'),
+            backgroundColor: AppColors.warning,
+          ),
+        );
+      }
       return;
     }
 
-    try {
-      final command = enable ? 'ALARM_ON' : 'ALARM_OFF';
-      final url = 'http://$deviceIP/alarm';
+    final command = enable ? 'ALARM_ON' : 'ALARM_OFF';
+    final url = 'http://$deviceIP/alarm';
 
-      print('');
-      print('========================================');
-      print('🔔 TRIGGERING ESP32 ALARM');
-      print('========================================');
-      print('   Command: $command');
-      print('   URL: $url');
-      print('   Device IP: $deviceIP');
-      print('========================================');
+    print('');
+    print('========================================');
+    print('🔔 TRIGGERING ESP32 ALARM');
+    print('========================================');
+    print('   Command: $command');
+    print('   URL: $url');
+    print('   Device IP: $deviceIP');
+    print('   Timestamp: ${DateTime.now()}');
 
-      final response = await http
-          .post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Connection': 'close',
-        },
-        body: json.encode({'command': command}),
-      )
-          .timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {
-          print('❌ TIMEOUT: ESP32 did not respond within 5 seconds');
-          throw TimeoutException('ESP32 alarm request timeout');
-        },
-      );
+    // Try up to 3 times
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        print('   Attempt $attempt/3...');
 
-      print('📡 Response Status: ${response.statusCode}');
-      print('📡 Response Body: ${response.body}');
+        final response = await http
+            .post(
+              Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Connection': 'close',
+              },
+              body: json.encode({'command': command}),
+            )
+            .timeout(
+              const Duration(seconds: 3),
+            );
 
-      if (response.statusCode == 200) {
-        print('✅ ESP32 alarm $command SUCCESS');
-        print('========================================\n');
-      } else {
-        print('⚠️ Unexpected status code: ${response.statusCode}');
-        print('========================================\n');
+        print('   Response Status: ${response.statusCode}');
+        print('   Response Body: ${response.body}');
+
+        if (response.statusCode == 200) {
+          print('✅ ESP32 alarm $command SUCCESS (attempt $attempt)');
+          print('========================================\n');
+
+          // Show success notification
+          if (mounted && enable) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('ESP32 buzzer activated'),
+                backgroundColor: AppColors.success,
+                duration: Duration(seconds: 1),
+              ),
+            );
+          }
+
+          return; // Success! Exit
+        } else {
+          print('⚠️ Unexpected status: ${response.statusCode}');
+          if (attempt < 3) {
+            print('   Retrying in 500ms...');
+            await Future.delayed(Duration(milliseconds: 500));
+          }
+        }
+      } catch (e) {
+        print('❌ Attempt $attempt failed: $e');
+
+        if (attempt < 3) {
+          print('   Retrying in 500ms...');
+          await Future.delayed(Duration(milliseconds: 500));
+        } else {
+          print('❌ ========================================');
+          print('❌ ALL ATTEMPTS FAILED');
+          print('❌ ========================================');
+          print('❌ Error: $e');
+          print('❌ This could mean:');
+          print('❌   - ESP32 is not responding');
+          print('❌   - Network connection lost');
+          print('❌   - Wrong IP address');
+          print('❌   - ESP32 web server crashed');
+          print('❌ ========================================\n');
+
+          // Show error notification
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(
+                content: Text('ESP32 buzzer failed - check connection'),
+                backgroundColor: AppColors.error,
+                duration: Duration(seconds: 2),
+              ),
+            );
+          }
+        }
       }
-    } catch (e, stackTrace) {
-      print('');
-      print('❌ ========================================');
-      print('❌ ESP32 ALARM FAILED');
-      print('❌ ========================================');
-      print('❌ Error: $e');
-      print('❌ Stack trace: $stackTrace');
-      print('❌ ========================================\n');
     }
   }
 
