@@ -413,6 +413,60 @@ class CameraService {
     }
   }
 
+  Future<bool> resetESP32WiFi() async {
+    if (_connectedDevice == null) {
+      print('❌ No device connected');
+      return false;
+    }
+
+    try {
+      print('\n🔄 Sending WiFi reset command to ESP32...');
+      print('   Target: ${_connectedDevice!.ipAddress}');
+
+      final response = await http.post(
+        Uri.parse('http://${_connectedDevice!.ipAddress}/reset'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 10));
+
+      print('📡 Reset response: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        print('✅ WiFi reset command sent successfully');
+        print('   ESP32 will restart in AP mode');
+
+        // Clear cached IP since device will have new IP
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('esp32_last_ip');
+        await prefs.remove('esp32_last_connection');
+
+        // Disconnect from current device
+        disconnect();
+
+        print('✅ Local cache cleared');
+        return true;
+      } else {
+        print('⚠️ Unexpected response: ${response.body}');
+        return false;
+      }
+    } catch (e) {
+      print('❌ Reset failed: $e');
+      return false;
+    }
+  }
+
+  /// Clear cached device IP without sending reset to ESP32
+  Future<void> clearCachedDevice() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('esp32_last_ip');
+      await prefs.remove('esp32_last_connection');
+      disconnect();
+      print('✅ Cached device cleared');
+    } catch (e) {
+      print('⚠️ Failed to clear cache: $e');
+    }
+  }
+
   void _startPeriodicScan(List<ESP32Device> knownDevices) {
     _stopPeriodicScan();
     _isPeriodicScanEnabled = true;
