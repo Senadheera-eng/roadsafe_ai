@@ -432,6 +432,220 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
     );
   }
 
+  void _showForgetWiFiDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.wifi_off, color: AppColors.warning),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                'Forget WiFi Network',
+                style: AppTextStyles.headlineSmall,
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'This will reset your ESP32-CAM to setup mode.',
+              style: AppTextStyles.bodyMedium.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.info.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.info),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.info, color: AppColors.info, size: 20),
+                      const SizedBox(width: 8),
+                      Text('What will happen:',
+                          style: AppTextStyles.labelMedium),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '• ESP32 will forget saved WiFi\n'
+                    '• Device will restart in AP mode\n'
+                    '• You can reconnect to "RoadSafe-AI-Setup"\n'
+                    '• Configure new WiFi network',
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.warning),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.warning, color: AppColors.warning, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'This will disconnect your current session',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () {
+              Navigator.pop(context);
+              _performWiFiReset();
+            },
+            icon: const Icon(Icons.wifi_off),
+            label: const Text('Reset WiFi'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.warning,
+              foregroundColor: Colors.white,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _performWiFiReset() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Resetting ESP32 WiFi...';
+    });
+
+    try {
+      final cameraService = CameraService();
+      final success = await cameraService.resetESP32WiFi();
+
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _statusMessage = '';
+        });
+
+        if (success) {
+          _showResetSuccessDialog();
+        } else {
+          _showError(
+            'Reset Failed',
+            'Could not reset ESP32 WiFi. Make sure the device is connected and try again.',
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoading = false;
+          _statusMessage = '';
+        });
+        _showError('Reset Error', e.toString());
+      }
+    }
+  }
+
+  void _showResetSuccessDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.check_circle, color: AppColors.success, size: 32),
+            const SizedBox(width: 8),
+            const Text('WiFi Reset Successful'),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'ESP32 has been reset to setup mode.',
+              style: AppTextStyles.bodyLarge.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.primary),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.wifi,
+                          color: AppColors.primary, size: 20),
+                      const SizedBox(width: 8),
+                      Text('Next steps:', style: AppTextStyles.labelMedium),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '1. ESP32 is now in AP mode\n'
+                    '2. Connect to "RoadSafe-AI-Setup"\n'
+                    '3. Configure WiFi at 192.168.4.1\n'
+                    '4. Return and scan for device',
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog
+              // Reset to step 0 to start over
+              setState(() {
+                _currentStep = 0;
+                _esp32FinalIP = null;
+              });
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Start Setup'),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _verifyManualIP(String ip) async {
     setState(() {
       _isLoading = true;
@@ -954,6 +1168,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   // STEP 3: Find on Network
+  // STEP 3: Find on Network
   Widget _buildStep3FindOnNetwork() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -984,6 +1199,57 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           onPressed: _showManualIPDialog,
           icon: const Icon(Icons.edit),
           label: const Text('Enter IP Manually'),
+        ),
+        const SizedBox(height: 32),
+        // NEW: Forget WiFi Network button
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.warning.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      color: AppColors.warning, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Need to reconfigure WiFi?',
+                      style: AppTextStyles.labelMedium.copyWith(
+                        color: AppColors.warning,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'If your ESP32 is connected to a different WiFi network, you can reset it to setup mode.',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _showForgetWiFiDialog,
+                  icon: const Icon(Icons.wifi_off),
+                  label: const Text('Forget WiFi Network'),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.warning,
+                    side: const BorderSide(color: AppColors.warning),
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
