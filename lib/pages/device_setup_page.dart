@@ -543,7 +543,54 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
     try {
       final cameraService = CameraService();
-      final success = await cameraService.resetESP32WiFi();
+      bool success = false;
+
+      // STRATEGY 1: Try connected device first
+      if (cameraService.isConnected) {
+        print('🔄 Attempting reset via connected device...');
+        success = await cameraService.resetESP32WiFi();
+      }
+
+      // STRATEGY 2: If no connected device, try to find ESP32 on network
+      if (!success) {
+        print('🔍 No connected device, searching for ESP32...');
+
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Searching for ESP32 on network...';
+          });
+        }
+
+        // Try to find ESP32 on current network
+        final devices = await cameraService.scanForDevices();
+
+        if (devices.isNotEmpty) {
+          print('✅ Found ESP32 at ${devices.first.ipAddress}');
+
+          if (mounted) {
+            setState(() {
+              _statusMessage = 'Found device, sending reset command...';
+            });
+          }
+
+          // Connect to found device
+          await cameraService.connectToDevice(devices.first);
+
+          // Now try reset again
+          success = await cameraService.resetESP32WiFi();
+        }
+      }
+
+      // STRATEGY 3: Try ESP32 AP mode IP directly (192.168.4.1)
+      if (!success) {
+        print('🔄 Trying ESP32 AP mode (192.168.4.1)...');
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Trying AP mode (192.168.4.1)...';
+          });
+        }
+        success = await _resetViaAPMode();
+      }
 
       if (mounted) {
         setState(() {
@@ -556,7 +603,15 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         } else {
           _showError(
             'Reset Failed',
-            'Could not reset ESP32 WiFi. Make sure the device is connected and try again.',
+            'Could not reset ESP32 WiFi settings.\n\n'
+                'The device may be:\n'
+                '• Not responding\n'
+                '• On a different network\n'
+                '• Powered off\n\n'
+                'Please try:\n'
+                '1. Make sure ESP32 is powered on\n'
+                '2. Connect your phone to the same network as ESP32\n'
+                '3. Try again, or manually restart the ESP32 device',
           );
         }
       }
@@ -569,6 +624,27 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         _showError('Reset Error', e.toString());
       }
     }
+  }
+
+  // Helper method to try resetting via AP mode IP
+  Future<bool> _resetViaAPMode() async {
+    try {
+      print('📡 Sending reset to 192.168.4.1...');
+      final response = await http.post(
+        Uri.parse('http://192.168.4.1/reset'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 10));
+
+      print('📡 AP mode reset response: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        print('✅ Reset via AP mode successful');
+        return true;
+      }
+    } catch (e) {
+      print('❌ AP mode reset failed: $e');
+    }
+    return false;
   }
 
   void _showResetSuccessDialog() {
