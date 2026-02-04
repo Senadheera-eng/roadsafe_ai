@@ -200,6 +200,10 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   // STEP 2: Find ESP32 on Home Network
   // ============================================
 
+// ============================================
+// STEP 2: Find ESP32 on Home Network (FIXED!)
+// ============================================
+
   Future<void> _findESP32OnNetwork() async {
     setState(() {
       _isLoading = true;
@@ -211,70 +215,160 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
       final info = NetworkInfo();
       final myIP = await info.getWifiIP();
 
-      if (myIP == null) {
-        throw Exception(
-            'Cannot get device IP. Make sure you\'re connected to WiFi.');
+      // NEW: Check if phone is using mobile data (no WiFi IP)
+      if (myIP == null || myIP.isEmpty) {
+        print('📱 Phone is using mobile data, not WiFi');
+        print('🔍 Checking if hotspot is active...');
+
+        // Try common hotspot gateway IPs
+        List<String> hotspotGateways = [
+          '192.168.43.1', // Most common Android hotspot gateway
+          '192.168.137.1', // Windows/some Android
+          '172.20.10.1', // iOS hotspot
+          '192.168.1.1', // Some devices
+        ];
+
+        setState(() {
+          _statusMessage = 'Checking hotspot connections...';
+        });
+
+        // Try to find ESP32 connected to hotspot
+        for (String gateway in hotspotGateways) {
+          print('🔍 Trying gateway: $gateway');
+
+          final parts = gateway.split('.');
+          final networkBase = '${parts[0]}.${parts[1]}.${parts[2]}';
+
+          // Scan devices connected to this hotspot network
+          final ipsToCheck = [
+            1,
+            2,
+            10,
+            17,
+            20,
+            30,
+            42,
+            50,
+            59,
+            100,
+            101,
+            102,
+            103,
+            104,
+            105,
+            150,
+            200,
+            254,
+          ];
+
+          for (int ip in ipsToCheck) {
+            final targetIP = '$networkBase.$ip';
+
+            try {
+              final response = await http
+                  .get(Uri.parse('http://$targetIP/'))
+                  .timeout(const Duration(seconds: 1));
+
+              if (response.statusCode == 200) {
+                final body = response.body.toLowerCase();
+
+                if (body.contains('roadsafe') ||
+                    body.contains('esp32') ||
+                    body.contains('camera')) {
+                  print('✅ Found ESP32 at $targetIP (via hotspot)');
+
+                  setState(() {
+                    _esp32FinalIP = targetIP;
+                    _currentStep = 3;
+                    _isLoading = false;
+                    _statusMessage = '';
+                  });
+
+                  final cameraService = CameraService();
+                  await cameraService.setDiscoveredIP(targetIP);
+
+                  _showSuccessAndFinish(targetIP);
+                  return;
+                }
+              }
+            } catch (e) {
+              // Continue scanning
+            }
+          }
+        }
+
+        // If hotspot scan failed, show manual entry
+        setState(() {
+          _isLoading = false;
+          _statusMessage = '';
+        });
+
+        _showManualIPDialog();
+        return;
       }
 
+      // EXISTING CODE: Phone is on WiFi
       print('📱 Phone IP: $myIP');
 
       final parts = myIP.split('.');
       final networkBase = '${parts[0]}.${parts[1]}.${parts[2]}';
 
-      print('🔍 Scanning network: $networkBase.x');
+      print('🌐 Detected network: $networkBase.x');
+      print('🔍 Scanning $networkBase.x for ESP32-CAM...');
 
-      // IMPROVED: Extended priority IPs based on common router assignments
       final ipsToCheck = [
-        // Very common router assignments
-        1, // Gateway
-        100, 101, 102, 103, 104, 105, // DHCP range start
-
-        // Less common but possible
-        17, 42, 50, 51, 52, 53, 54, 55,
-
-        // Additional DHCP ranges
-        150, 151, 152, 153, 154, 155,
-        200, 201, 202, 203, 204, 205,
-
-        // End of range
-        250, 251, 252, 253, 254,
+        1,
+        10,
+        17,
+        20,
+        30,
+        42,
+        50,
+        59,
+        100,
+        101,
+        102,
+        103,
+        104,
+        105,
+        150,
+        200,
+        254,
       ];
 
-      // IMPROVED: Parallel scanning for faster results
-      print('🔍 Starting parallel scan of ${ipsToCheck.length} IPs...');
+      print('🚀 Starting parallel scan of ${ipsToCheck.length} IPs...');
+
+      setState(() {
+        _statusMessage = 'Scanning $networkBase.x network...';
+      });
 
       final futures = ipsToCheck.map((ip) async {
         final targetIP = '$networkBase.$ip';
 
         try {
           final response = await http
-              .get(
-                Uri.parse('http://$targetIP/'),
-              )
+              .get(Uri.parse('http://$targetIP/'))
               .timeout(const Duration(seconds: 2));
 
           if (response.statusCode == 200) {
             final body = response.body.toLowerCase();
 
-            // IMPROVED: Better ESP32 detection
             if (body.contains('roadsafe') ||
                 body.contains('drowsiness') ||
                 body.contains('esp32-cam') ||
                 body.contains('esp32cam') ||
-                (body.contains('camera') && body.contains('stream')) ||
-                body.contains('mjpeg')) {
+                (body.contains('camera') && body.contains('stream'))) {
               print('✅ Found ESP32 at $targetIP');
               return targetIP;
             }
           }
         } catch (e) {
-          // Silently continue
+          // Continue
         }
 
         return null;
       }).toList();
 
-      // Wait for first successful result
       String? foundIP;
 
       for (var future in futures) {
@@ -295,7 +389,6 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           _statusMessage = '';
         });
 
-        // Save to camera service
         final cameraService = CameraService();
         await cameraService.setDiscoveredIP(foundIP);
 
@@ -303,67 +396,12 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         return;
       }
 
-      // IMPROVED: If parallel scan fails, try sequential scan with more IPs
-      print('⚠️ Parallel scan failed, trying sequential full scan...');
-
-      setState(() {
-        _statusMessage = 'Performing deep scan...';
-      });
-
-      for (int ip = 1; ip <= 254; ip++) {
-        final targetIP = '$networkBase.$ip';
-
-        if (ipsToCheck.contains(ip)) continue; // Already checked
-
-        setState(() {
-          _statusMessage = 'Checking $targetIP... (${ip}/254)';
-        });
-
-        try {
-          final response = await http
-              .get(
-                Uri.parse('http://$targetIP/'),
-              )
-              .timeout(const Duration(milliseconds: 1500));
-
-          if (response.statusCode == 200) {
-            final body = response.body.toLowerCase();
-
-            if (body.contains('roadsafe') ||
-                body.contains('drowsiness') ||
-                body.contains('esp32') ||
-                (body.contains('camera') && body.contains('stream'))) {
-              print('✅ Found ESP32 at $targetIP (deep scan)');
-
-              setState(() {
-                _esp32FinalIP = targetIP;
-                _currentStep = 3;
-                _isLoading = false;
-                _statusMessage = '';
-              });
-
-              final cameraService = CameraService();
-              await cameraService.setDiscoveredIP(targetIP);
-
-              _showSuccessAndFinish(targetIP);
-              return;
-            }
-          }
-        } catch (e) {
-          // Continue scanning
-        }
-
-        // Break early if taking too long
-        if (ip > 200 && !mounted) break;
-      }
-
-      // Not found - show manual entry
       setState(() {
         _isLoading = false;
         _statusMessage = '';
       });
 
-      print('❌ ESP32 not found after full scan');
+      print('❌ ESP32 not found');
       _showManualIPDialog();
     } catch (e) {
       setState(() {
