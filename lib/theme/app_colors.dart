@@ -32,6 +32,8 @@ class AppColors {
   static const Color background = Color(0xFFF8FAFC); // Very Light Blue Gray
   static const Color surface = Colors.white;
   static const Color surfaceVariant = Color(0xFFF1F5F9); // Light Blue Gray
+  static const Color border = Color(0xFFE2E8F0); // Border color (ADDED)
+  static const Color borderDark = Color(0xFF334155); // Dark mode border (ADDED)
 
   // Dark Mode (NEW)
   static const Color backgroundDark = Color(0xFF121212); // Deep Black/Grey
