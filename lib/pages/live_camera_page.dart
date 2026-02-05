@@ -50,7 +50,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   late AnimationController _alertController;
   late Animation<double> _alertAnimation;
 
-  // Image for detection overlay
   ui.Image? _currentImage;
 
   @override
@@ -100,65 +99,87 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 
   // ============================================
-  // ESP32 ALARM CONTROL
+  // ESP32 ALARM CONTROL (FIXED!)
   // ============================================
 
   Future<void> _triggerESP32Alarm(bool enable) async {
     final deviceIP = _cameraService.connectedDevice?.ipAddress;
 
     if (deviceIP == null) {
-      print('⚠️ No ESP32 connected, cannot trigger alarm');
-      return;
+      print('❌ No ESP32 connected, cannot trigger alarm');
+      print('   Using state IP: $_currentDeviceIP');
+
+      // Try using state IP as fallback
+      if (_currentDeviceIP == null) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('ESP32 not connected - buzzer unavailable'),
+              backgroundColor: AppColors.warning,
+              duration: Duration(seconds: 1),
+            ),
+          );
+        }
+        return;
+      }
     }
 
-    try {
-      final command = enable ? 'ALARM_ON' : 'ALARM_OFF';
-      final url = 'http://$deviceIP/alarm';
+    final targetIP = deviceIP ?? _currentDeviceIP!;
+    final command = enable ? 'ALARM_ON' : 'ALARM_OFF';
+    final url = 'http://$targetIP/alarm';
 
-      print('');
-      print('========================================');
-      print('🔔 TRIGGERING ESP32 ALARM');
-      print('========================================');
-      print('   Command: $command');
-      print('   URL: $url');
-      print('   Device IP: $deviceIP');
-      print('========================================');
+    print('');
+    print('========================================');
+    print('🔔 TRIGGERING ESP32 ALARM');
+    print('========================================');
+    print('   Command: $command');
+    print('   URL: $url');
+    print('   Device IP: $targetIP');
+    print('   Timestamp: ${DateTime.now()}');
 
-      final response = await http
-          .post(
-        Uri.parse(url),
-        headers: {
-          'Content-Type': 'application/json',
-          'Connection': 'close',
-        },
-        body: json.encode({'command': command}),
-      )
-          .timeout(
-        const Duration(seconds: 5),
-        onTimeout: () {
-          print('❌ TIMEOUT: ESP32 did not respond within 5 seconds');
-          throw TimeoutException('ESP32 alarm request timeout');
-        },
-      );
+    // Try up to 3 times with shorter timeout
+    for (int attempt = 1; attempt <= 3; attempt++) {
+      try {
+        print('   Attempt $attempt/3...');
 
-      print('📡 Response Status: ${response.statusCode}');
-      print('📡 Response Body: ${response.body}');
+        final response = await http
+            .post(
+              Uri.parse(url),
+              headers: {
+                'Content-Type': 'application/json',
+                'Connection': 'close',
+              },
+              body: json.encode({'command': command}),
+            )
+            .timeout(
+              const Duration(seconds: 2), // Reduced from 3 to 2 seconds
+            );
 
-      if (response.statusCode == 200) {
-        print('✅ ESP32 alarm $command SUCCESS');
-        print('========================================\n');
-      } else {
-        print('⚠️ Unexpected status code: ${response.statusCode}');
-        print('========================================\n');
+        print('   ✅ Response Status: ${response.statusCode}');
+        print('   Response Body: ${response.body}');
+
+        if (response.statusCode == 200) {
+          print('✅ ESP32 alarm $command SUCCESS (attempt $attempt)');
+          print('========================================\n');
+          return; // Success! Exit immediately
+        } else {
+          print('⚠️ Unexpected status: ${response.statusCode}');
+          if (attempt < 3) {
+            await Future.delayed(Duration(milliseconds: 300));
+          }
+        }
+      } catch (e) {
+        print('❌ Attempt $attempt failed: $e');
+
+        if (attempt < 3) {
+          await Future.delayed(Duration(milliseconds: 300));
+        } else {
+          print('❌ ========================================');
+          print('❌ ALL ATTEMPTS FAILED');
+          print('❌ Error: $e');
+          print('❌ ========================================\n');
+        }
       }
-    } catch (e, stackTrace) {
-      print('');
-      print('❌ ========================================');
-      print('❌ ESP32 ALARM FAILED');
-      print('❌ ========================================');
-      print('❌ Error: $e');
-      print('❌ Stack trace: $stackTrace');
-      print('❌ ========================================\n');
     }
   }
 
@@ -252,7 +273,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
     _showMessage('Monitoring started', AppColors.success);
 
-    // Start detection loop (every 1.5 seconds)
     _detectionTimer = Timer.periodic(
       const Duration(milliseconds: 1500),
       (timer) => _performDetection(),
@@ -262,17 +282,14 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   void _stopMonitoring() {
     _detectionTimer?.cancel();
 
-    // Stop phone vibration
     DrowsinessDetector.stopContinuousVibration();
-
-    // Stop ESP32 buzzer
     _triggerESP32Alarm(false);
 
     setState(() {
       _isMonitoring = false;
       _sessionStartTime = null;
       _lastDetection = null;
-      _isAlerting = false; // Reset alert state
+      _isAlerting = false;
     });
 
     if (_detectionCount > 0) {
@@ -284,7 +301,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     if (!_isConnected || !_isMonitoring) return;
 
     try {
-      // Get current frame from MJPEG viewer
       final currentFrame = _mjpegKey.currentState?.currentFrame;
 
       if (currentFrame == null) {
@@ -294,7 +310,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
       print('📸 Capturing frame for detection (${currentFrame.length} bytes)');
 
-      // Analyze with Roboflow API
       final result = await DrowsinessDetector.analyzeImage(currentFrame);
 
       if (result != null) {
@@ -303,32 +318,23 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           _detectionCount++;
         });
 
-        // ============================================
-        // FIXED: Only trigger alert, don't auto-stop
-        // ============================================
         if (result.isDrowsy) {
           _consecutiveClosedFrames++;
           print(
               '⚠️ Drowsy frame detected ($_consecutiveClosedFrames consecutive)');
 
-          // Trigger alert if eyes closed for 2+ frames AND not already alerting
           if (_consecutiveClosedFrames >= 2 && !_isAlerting) {
             print('🚨 TRIGGERING NEW ALERT (threshold reached)');
             await _triggerDrowsinessAlert();
           } else if (_isAlerting) {
-            print(
-                '⚠️ Still drowsy, alert already active - vibration continues');
+            print('⚠️ Still drowsy, alert already active');
           }
         } else {
-          // Eyes are open, but DON'T stop alert
           if (_consecutiveClosedFrames > 0) {
             if (_isAlerting) {
-              print(
-                  '👀 Eyes opened, but ALERT STILL ACTIVE - user must dismiss');
-              print(
-                  '   Vibration and buzzer will continue until "I\'m Awake" pressed');
+              print('👀 Eyes opened, but ALERT STILL ACTIVE');
             } else {
-              print('✅ Eyes open - resetting counter (no alert was active)');
+              print('✅ Eyes open - resetting counter');
             }
           }
           _consecutiveClosedFrames = 0;
@@ -339,9 +345,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     }
   }
 
+  // ============================================
+  // ALERT TRIGGERING (FIXED!)
+  // ============================================
+
   Future<void> _triggerDrowsinessAlert() async {
     if (_isAlerting) {
-      print('⚠️ Alert already active, skipping duplicate trigger');
+      print('⚠️ Alert already active');
       return;
     }
 
@@ -355,29 +365,42 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     print('🚨 DROWSINESS ALERT TRIGGERED!');
     print('🚨 ========================================');
     print('   Alert #$_alertCount');
-    print('   Phone vibration: STARTING (continuous)');
-    print('   ESP32 buzzer: STARTING (continuous)');
-    print('   Will continue until user presses "I\'m Awake"');
     print('🚨 ========================================');
     print('');
 
+    // FIX: Start animation immediately (non-blocking)
     _alertController.forward().then((_) {
       _alertController.reverse();
     });
 
-    // Start phone vibration (continuous)
+    // FIX: Start vibration and ESP32 alarm in parallel, then show dialog
     try {
-      await DrowsinessDetector.startContinuousVibration();
-      print('✅ Phone vibration started');
+      print('📳 Starting phone vibration...');
+      final vibrationFuture = DrowsinessDetector.startContinuousVibration();
+
+      print('🔔 Triggering ESP32 buzzer...');
+      final esp32Future = _triggerESP32Alarm(true);
+
+      // Wait for BOTH to complete before showing dialog
+      await Future.wait([
+        vibrationFuture,
+        esp32Future,
+      ], eagerError: false);
+
+      print('✅ Both alerts started successfully');
+      print('');
+
+      // NOW show the dialog after alerts are active
+      if (mounted) {
+        _showAlertDialog();
+      }
     } catch (e) {
-      print('❌ Phone vibration error: $e');
+      print('❌ Alert trigger error: $e');
+      // Still show dialog even if there's an error
+      if (mounted) {
+        _showAlertDialog();
+      }
     }
-
-    // Start ESP32 buzzer (continuous)
-    await _triggerESP32Alarm(true);
-
-    // Show dialog (vibration & buzzer continue until dismissed)
-    _showAlertDialog();
   }
 
   void _showAlertDialog() {
@@ -385,7 +408,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       context: context,
       barrierDismissible: false,
       builder: (context) => WillPopScope(
-        onWillPop: () async => false, // Prevent back button
+        onWillPop: () async => false,
         child: AlertDialog(
           backgroundColor: AppColors.error,
           shape:
@@ -393,7 +416,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           content: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // Animated warning icon
               TweenAnimationBuilder<double>(
                 tween: Tween(begin: 0.0, end: 1.0),
                 duration: const Duration(milliseconds: 500),
@@ -426,7 +448,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 textAlign: TextAlign.center,
               ),
               const SizedBox(height: 16),
-              // Active alerts indicator
               Container(
                 padding:
                     const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -436,7 +457,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                 ),
                 child: Column(
                   children: [
-                    // Phone vibration indicator
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -452,7 +472,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                       ],
                     ),
                     const SizedBox(height: 8),
-                    // ESP32 buzzer indicator
                     Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
@@ -495,12 +514,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   print('✅ USER PRESSED "I\'M AWAKE"');
                   print('✅ ========================================');
 
-                  // Stop phone vibration
                   print('   Stopping phone vibration...');
                   await DrowsinessDetector.stopContinuousVibration();
                   print('   ✓ Phone vibration stopped');
 
-                  // Stop ESP32 buzzer
                   print('   Stopping ESP32 buzzer...');
                   await _triggerESP32Alarm(false);
                   print('   ✓ ESP32 buzzer stopped');
@@ -511,14 +528,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
                   Navigator.pop(context);
 
-                  // Reset alert state after a delay
-                  await Future.delayed(const Duration(seconds: 2));
+                  await Future.delayed(const Duration(seconds: 1));
                   setState(() {
                     _isAlerting = false;
                     _consecutiveClosedFrames = 0;
                   });
 
-                  print('📊 Alert state reset - ready for next detection\n');
+                  print('📊 Alert state reset\n');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
@@ -809,7 +825,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
 
     return Stack(
       children: [
-        // MJPEG Stream
         Container(
           color: Colors.black,
           child: Center(
@@ -821,8 +836,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
           ),
         ),
-
-        // Detection Overlay
         if (_lastDetection != null && _isMonitoring)
           CustomPaint(
             painter: DetectionOverlayPainter(
@@ -832,8 +845,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             ),
             child: Container(),
           ),
-
-        // Eye Opening Percentage
         if (_lastDetection != null && _isMonitoring)
           Positioned(
             bottom: 16,
@@ -841,8 +852,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
             right: 16,
             child: _buildDetectionOverlay(),
           ),
-
-        // Recording Indicator
         if (_isMonitoring)
           Positioned(
             top: 16,
@@ -892,8 +901,6 @@ class _LiveCameraPageState extends State<LiveCameraPage>
               },
             ),
           ),
-
-        // Alert Indicator
         if (_isAlerting)
           Positioned.fill(
             child: AnimatedBuilder(
@@ -1073,63 +1080,128 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           ),
         ],
       ),
-      child: Row(
+      child: Column(
         children: [
-          if (!_isConnected)
-            Expanded(
-              child: ElevatedButton.icon(
-                onPressed: _isConnecting ? null : _scanForDevices,
-                icon: _isConnecting
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                    : const Icon(Icons.search),
-                label: Text(_isConnecting ? 'Scanning...' : 'Scan'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.primary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+          // TEST BUTTONS (can remove after debugging)
+          if (_isConnected)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        print('🧪 MANUAL TEST: Buzzer ON');
+                        await _triggerESP32Alarm(true);
+                        await Future.delayed(Duration(seconds: 2));
+                        print('🧪 MANUAL TEST: Buzzer OFF');
+                        await _triggerESP32Alarm(false);
+                      },
+                      icon: Icon(Icons.volume_up, size: 20),
+                      label:
+                          Text('Test Buzzer', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: BorderSide(color: AppColors.primary),
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () async {
+                        final ip = _cameraService.connectedDevice?.ipAddress ??
+                            _currentDeviceIP;
+                        if (ip != null) {
+                          print('🧪 Testing /test_alarm endpoint...');
+                          try {
+                            final response = await http
+                                .get(
+                                  Uri.parse('http://$ip/test_alarm'),
+                                )
+                                .timeout(Duration(seconds: 5));
+                            print('✅ Test endpoint: ${response.statusCode}');
+                            print('   ${response.body}');
+                          } catch (e) {
+                            print('❌ Test endpoint failed: $e');
+                          }
+                        }
+                      },
+                      icon: Icon(Icons.bug_report, size: 20),
+                      label:
+                          Text('Test Endpoint', style: TextStyle(fontSize: 12)),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.info,
+                        side: BorderSide(color: AppColors.info),
+                        padding: EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+
+          Row(
+            children: [
+              if (!_isConnected)
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isConnecting ? null : _scanForDevices,
+                    icon: _isConnecting
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.search),
+                    label: Text(_isConnecting ? 'Scanning...' : 'Scan'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.primary,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-          if (_isConnected) ...[
-            Expanded(
-              flex: 2,
-              child: ElevatedButton.icon(
-                onPressed: _isMonitoring ? _stopMonitoring : _startMonitoring,
-                icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
-                label: Text(
-                    _isMonitoring ? 'Stop Monitoring' : 'Start Monitoring'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor:
-                      _isMonitoring ? AppColors.error : AppColors.success,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 16),
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
+              if (_isConnected) ...[
+                Expanded(
+                  flex: 2,
+                  child: ElevatedButton.icon(
+                    onPressed:
+                        _isMonitoring ? _stopMonitoring : _startMonitoring,
+                    icon: Icon(_isMonitoring ? Icons.stop : Icons.play_arrow),
+                    label: Text(
+                        _isMonitoring ? 'Stop Monitoring' : 'Start Monitoring'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor:
+                          _isMonitoring ? AppColors.error : AppColors.success,
+                      foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 16),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                    ),
                   ),
                 ),
-              ),
-            ),
-            const SizedBox(width: 12),
-            IconButton(
-              onPressed: _disconnect,
-              icon: const Icon(Icons.power_settings_new),
-              style: IconButton.styleFrom(
-                backgroundColor: AppColors.surfaceVariant,
-                foregroundColor: AppColors.error,
-                padding: const EdgeInsets.all(16),
-              ),
-            ),
-          ],
+                const SizedBox(width: 12),
+                IconButton(
+                  onPressed: _disconnect,
+                  icon: const Icon(Icons.power_settings_new),
+                  style: IconButton.styleFrom(
+                    backgroundColor: AppColors.surfaceVariant,
+                    foregroundColor: AppColors.error,
+                    padding: const EdgeInsets.all(16),
+                  ),
+                ),
+              ],
+            ],
+          ),
         ],
       ),
     );
