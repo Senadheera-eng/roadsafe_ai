@@ -2,264 +2,303 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'dart:async';
+import 'package:network_info_plus/network_info_plus.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
-import '../widgets/glass_card.dart';
-import '../services/camera_service.dart';
 
 class WiFiConfigPage extends StatefulWidget {
-  final String esp32IP; // e.g., "192.168.4.1" for AP mode
-
-  const WiFiConfigPage({super.key, required this.esp32IP});
+  const WiFiConfigPage({super.key});
 
   @override
   State<WiFiConfigPage> createState() => _WiFiConfigPageState();
 }
 
-class _WiFiConfigPageState extends State<WiFiConfigPage>
-    with SingleTickerProviderStateMixin {
-  late AnimationController _animationController;
-  late Animation<double> _fadeAnimation;
+class _WiFiConfigPageState extends State<WiFiConfigPage> {
+  final _ssidController = TextEditingController();
+  final _passwordController = TextEditingController();
 
-  final TextEditingController _passwordController = TextEditingController();
-  final TextEditingController _manualIPController = TextEditingController();
-
-  bool _isScanning = true;
-  bool _isConnecting = false;
+  bool _isLoading = false;
+  bool _isScanning = false;
+  bool _isCheckingConnection = true;
+  bool _isConnectedToESP32 = false;
+  String? _currentSSID;
+  String? _errorMessage;
+  List<String> _availableNetworks = [];
   bool _obscurePassword = true;
-  bool _showManualIPEntry = false;
-  List<WiFiNetwork> _networks = [];
-  String? _selectedSSID;
-  String _statusMessage = '';
-  bool _connectionSuccess = false;
-  String? _detectedIP;
+
+  // ESP32 AP default credentials
+  static const String ESP32_AP_SSID = 'Road-Safe-AI-Setup';
+  static const String ESP32_AP_IP = '192.168.4.1';
+  static const int ESP32_AP_PORT = 80;
 
   @override
   void initState() {
     super.initState();
-
-    _animationController = AnimationController(
-      duration: const Duration(milliseconds: 800),
-      vsync: this,
-    );
-
-    _fadeAnimation = Tween<double>(begin: 0, end: 1).animate(
-      CurvedAnimation(parent: _animationController, curve: Curves.easeOut),
-    );
-
-    _animationController.forward();
-    _scanNetworks();
+    _checkESP32Connection();
   }
 
   @override
   void dispose() {
-    _animationController.dispose();
+    _ssidController.dispose();
     _passwordController.dispose();
-    _manualIPController.dispose();
     super.dispose();
   }
 
-  Future<void> _scanNetworks() async {
+  /// ✅ ENHANCED: Multi-method ESP32 connection detection
+  Future<void> _checkESP32Connection() async {
     setState(() {
-      _isScanning = true;
-      _networks.clear();
-      _statusMessage = 'Scanning for WiFi networks...';
+      _isCheckingConnection = true;
+      _errorMessage = null;
     });
 
+    print('\n🔍 Checking ESP32 connection...');
+
     try {
-      print('📡 Scanning WiFi networks from ${widget.esp32IP}...');
+      // Method 1: Check WiFi SSID
+      final ssidResult = await _checkWiFiSSID();
 
-      final response = await http
-          .get(Uri.parse('http://${widget.esp32IP}/scan'))
-          .timeout(const Duration(seconds: 30));
+      // Method 2: Try to ping ESP32 gateway
+      final pingResult = await _pingESP32Gateway();
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final List networks = data['networks'];
+      // Method 3: Check WiFi gateway IP
+      final gatewayResult = await _checkGatewayIP();
 
-        print('✅ Found ${networks.length} networks');
+      final isConnected = ssidResult || pingResult || gatewayResult;
 
-        setState(() {
-          _networks = networks.map((n) => WiFiNetwork.fromJson(n)).toList()
-            ..sort(
-                (a, b) => b.rssi.compareTo(a.rssi)); // Sort by signal strength
-          _isScanning = false;
-          _statusMessage = 'Found ${networks.length} networks';
-        });
+      setState(() {
+        _isConnectedToESP32 = isConnected;
+        _isCheckingConnection = false;
+      });
+
+      if (isConnected) {
+        print('✅ Connected to ESP32 setup network');
+        _scanAvailableNetworks();
       } else {
-        throw Exception('HTTP ${response.statusCode}');
+        print('❌ Not connected to ESP32 setup network');
+        setState(() {
+          _errorMessage =
+              'Please connect to "$ESP32_AP_SSID" WiFi network first';
+        });
       }
     } catch (e) {
-      print('❌ Network scan failed: $e');
+      print('❌ Connection check error: $e');
       setState(() {
-        _isScanning = false;
-        _statusMessage = 'Failed to scan networks: $e';
+        _isCheckingConnection = false;
+        _isConnectedToESP32 = false;
+        _errorMessage = 'Error checking connection: $e';
       });
-      _showSnackBar('Network scan failed', AppColors.error);
     }
   }
 
-  Future<void> _connectToWiFi() async {
-    if (_selectedSSID == null || _passwordController.text.isEmpty) {
-      _showSnackBar(
-          'Please select a network and enter password', AppColors.warning);
+  /// ✅ Method 1: Check current WiFi SSID
+  Future<bool> _checkWiFiSSID() async {
+    try {
+      final info = NetworkInfo();
+      final wifiName = await info.getWifiName();
+
+      print('📡 Current WiFi SSID: $wifiName');
+
+      if (wifiName == null) {
+        print('⚠️ Cannot get WiFi SSID (null)');
+        return false;
+      }
+
+      // Clean SSID (remove quotes if present)
+      String cleanSSID = wifiName.replaceAll('"', '').trim();
+
+      setState(() {
+        _currentSSID = cleanSSID;
+      });
+
+      // Check if SSID matches (case-insensitive)
+      final matches = cleanSSID.toLowerCase() == ESP32_AP_SSID.toLowerCase();
+      print('   SSID Match: $matches ($cleanSSID vs $ESP32_AP_SSID)');
+
+      return matches;
+    } catch (e) {
+      print('❌ SSID check error: $e');
+      return false;
+    }
+  }
+
+  /// ✅ Method 2: Ping ESP32 gateway
+  Future<bool> _pingESP32Gateway() async {
+    try {
+      print('🔍 Attempting to ping ESP32 at $ESP32_AP_IP...');
+
+      final response = await http
+          .get(Uri.parse('http://$ESP32_AP_IP/'))
+          .timeout(const Duration(seconds: 3));
+
+      final success = response.statusCode == 200 || response.statusCode == 404;
+      print(
+          '   Ping result: ${success ? "✅ Success" : "❌ Failed"} (Status: ${response.statusCode})');
+
+      return success;
+    } catch (e) {
+      print('   Ping result: ❌ Failed ($e)');
+      return false;
+    }
+  }
+
+  /// ✅ Method 3: Check gateway IP
+  Future<bool> _checkGatewayIP() async {
+    try {
+      final info = NetworkInfo();
+      final gateway = await info.getWifiGatewayIP();
+
+      print('🌐 Gateway IP: $gateway');
+
+      if (gateway == null) {
+        return false;
+      }
+
+      // ESP32 AP mode typically uses 192.168.4.1
+      final matches = gateway == ESP32_AP_IP;
+      print('   Gateway Match: $matches ($gateway vs $ESP32_AP_IP)');
+
+      return matches;
+    } catch (e) {
+      print('❌ Gateway check error: $e');
+      return false;
+    }
+  }
+
+  /// ✅ Scan for available WiFi networks via ESP32
+  Future<void> _scanAvailableNetworks() async {
+    setState(() {
+      _isScanning = true;
+      _errorMessage = null;
+    });
+
+    print('\n📡 Scanning for WiFi networks via ESP32...');
+
+    try {
+      final response = await http
+          .get(Uri.parse('http://$ESP32_AP_IP/scan'))
+          .timeout(const Duration(seconds: 15));
+
+      print('   Response status: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        print('   Scan response: $data');
+
+        List<String> networks = [];
+
+        if (data is Map && data['networks'] != null) {
+          networks = List<String>.from(data['networks']);
+        } else if (data is List) {
+          networks = List<String>.from(data);
+        }
+
+        // Remove duplicates and sort
+        networks = networks.toSet().toList();
+        networks.sort();
+
+        print('✅ Found ${networks.length} networks: $networks');
+
+        setState(() {
+          _availableNetworks = networks;
+          _isScanning = false;
+        });
+      } else {
+        throw Exception('Scan failed: ${response.statusCode}');
+      }
+    } catch (e) {
+      print('❌ Network scan error: $e');
+      setState(() {
+        _isScanning = false;
+        _errorMessage = 'Failed to scan networks: $e';
+      });
+    }
+  }
+
+  /// ✅ Configure WiFi on ESP32
+  Future<void> _configureWiFi() async {
+    if (_ssidController.text.isEmpty) {
+      _showError('Please select a WiFi network');
+      return;
+    }
+
+    if (_passwordController.text.isEmpty) {
+      _showError('Please enter WiFi password');
       return;
     }
 
     setState(() {
-      _isConnecting = true;
-      _statusMessage = 'Sending WiFi credentials to ESP32...';
-      _connectionSuccess = false;
-      _detectedIP = null;
+      _isLoading = true;
+      _errorMessage = null;
     });
 
+    print('\n🔧 Configuring WiFi on ESP32...');
+    print('   SSID: ${_ssidController.text}');
+    print('   Password: ${"*" * _passwordController.text.length}');
+
     try {
-      print('\n========================================');
-      print('🔌 CONNECTING TO WIFI');
-      print('========================================');
-      print('Target ESP32: ${widget.esp32IP}');
-      print('SSID: $_selectedSSID');
-      print(
-          'Password: ${_passwordController.text.replaceAll(RegExp(r'.'), '*')}');
-
-      // STEP 1: Send credentials to ESP32
-      print('\n📤 Step 1: Sending credentials to ESP32...');
-
       final response = await http
           .post(
-            Uri.parse('http://${widget.esp32IP}/connect'),
+            Uri.parse('http://$ESP32_AP_IP/configure'),
             headers: {'Content-Type': 'application/json'},
             body: json.encode({
-              'ssid': _selectedSSID,
+              'ssid': _ssidController.text,
               'password': _passwordController.text,
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 10));
 
-      print('📥 Response Status: ${response.statusCode}');
-      print('📥 Response Body: ${response.body}');
-
-      // STEP 2: Parse response
-      String? newIp;
-      bool esp32Connected = false;
+      print('   Configuration response: ${response.statusCode}');
+      print('   Response body: ${response.body}');
 
       if (response.statusCode == 200) {
-        try {
-          final data = json.decode(response.body);
+        final data = json.decode(response.body);
+        print('✅ WiFi configured successfully');
+        print('   Response data: $data');
 
-          if (data is Map) {
-            esp32Connected = data['success'] == true;
-
-            if (data['ip'] != null && data['ip'].toString().isNotEmpty) {
-              newIp = data['ip'].toString();
-              print('✅ ESP32 reported IP: $newIp');
-            }
-          }
-        } catch (e) {
-          print('⚠️ Failed to parse JSON response: $e');
-          // ESP32 might have sent HTML or rebooted
+        // Extract new IP address
+        String? newIP;
+        if (data is Map) {
+          newIP = data['ip'] ?? data['new_ip'] ?? data['assigned_ip'];
         }
-      }
-
-      // STEP 3: Handle different scenarios
-      if (esp32Connected && newIp != null && newIp.isNotEmpty) {
-        // ✅ BEST CASE: ESP32 connected AND reported IP
-        print('✅ SUCCESS: ESP32 connected and reported IP!');
 
         setState(() {
-          _detectedIP = newIp;
-          _statusMessage = 'ESP32 connected! New IP: $newIp';
-          _connectionSuccess = true;
+          _isLoading = false;
         });
 
-        _showSuccessDialog(newIp);
-        return;
+        _showSuccessDialog(newIP);
+      } else {
+        throw Exception('Configuration failed: ${response.statusCode}');
       }
-
-      // STEP 4: ESP32 connected but didn't report IP (or rebooted)
-      print('\n⚠️ ESP32 may be connected but IP not received');
-      print('   This usually means ESP32 rebooted after connecting');
-
-      setState(() {
-        _statusMessage =
-            'ESP32 is connecting to WiFi...\nSearching for device...';
-      });
-
-      // Wait a bit for ESP32 to finish connecting and boot up
-      print('⏳ Waiting 8 seconds for ESP32 to connect and boot...');
-      await Future.delayed(const Duration(seconds: 8));
-
-      // STEP 5: Try to discover device via UDP
-      print('\n🔍 Step 2: Searching for ESP32 via UDP discovery...');
-
-      setState(() {
-        _statusMessage = 'Searching for device on your WiFi network...';
-      });
-
-      final devices = await CameraService().scanForDevices();
-
-      if (devices.isNotEmpty) {
-        newIp = devices.first.ipAddress;
-        print('✅ FOUND ESP32 at: $newIp');
-
-        setState(() {
-          _detectedIP = newIp;
-          _statusMessage = 'Found device at $newIp!';
-          _connectionSuccess = true;
-        });
-
-        _showSuccessDialog(newIp!);
-        return;
-      }
-
-      // STEP 6: UDP discovery failed - show instructions
-      print('❌ Could not find ESP32 automatically');
-      print('   This usually means:');
-      print('   1. Phone still connected to RoadSafe-AI-Setup WiFi');
-      print('   2. Phone needs to switch to home WiFi');
-      print('   3. ESP32 is on home WiFi but phone is not');
-
-      setState(() {
-        _statusMessage = 'ESP32 configured but cannot find it on network';
-        _connectionSuccess = false;
-      });
-
-      _showNetworkSwitchInstructions();
     } catch (e) {
-      print('❌ Connection error: $e');
+      print('❌ WiFi configuration error: $e');
       setState(() {
-        _statusMessage = 'Error: $e';
-        _connectionSuccess = false;
+        _isLoading = false;
       });
-      _showSnackBar('Connection error: $e', AppColors.error);
-    } finally {
-      setState(() {
-        _isConnecting = false;
-      });
+      _showError('Configuration failed: $e');
     }
   }
 
-  void _showSuccessDialog(String ip) {
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: AppColors.error,
+        duration: const Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showSuccessDialog(String? newIP) {
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
+        title: const Row(
           children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.check_circle,
-                  color: AppColors.success, size: 32),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text('WiFi Configured!'),
-            ),
+            Icon(Icons.check_circle, color: AppColors.success, size: 32),
+            SizedBox(width: 8),
+            Text('WiFi Configured!'),
           ],
         ),
         content: Column(
@@ -267,219 +306,238 @@ class _WiFiConfigPageState extends State<WiFiConfigPage>
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'ESP32 successfully connected to your WiFi network.',
-              style: AppTextStyles.bodyMedium,
+              'ESP32 is now connected to ${_ssidController.text}',
+              style: AppTextStyles.bodyLarge,
             ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppColors.success.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.success.withOpacity(0.3)),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.wifi,
-                          color: AppColors.success, size: 20),
-                      const SizedBox(width: 8),
-                      Text('Network:', style: AppTextStyles.labelMedium),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    _selectedSSID ?? 'Unknown',
-                    style: AppTextStyles.titleMedium.copyWith(
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      const Icon(Icons.router,
-                          color: AppColors.success, size: 20),
-                      const SizedBox(width: 8),
-                      Text('IP Address:', style: AppTextStyles.labelMedium),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    ip,
-                    style: AppTextStyles.titleLarge.copyWith(
-                      fontWeight: FontWeight.bold,
-                      color: AppColors.success,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.info.withOpacity(0.3)),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.info_outline,
-                      color: AppColors.info, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Make sure your phone is connected to the same WiFi network',
-                      style: AppTextStyles.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(context, ip); // Return IP to device setup page
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.success,
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 16),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            child: const Text('Continue'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showNetworkSwitchInstructions() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: const Icon(Icons.wifi_find,
-                  color: AppColors.warning, size: 32),
-            ),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text('Switch WiFi Network'),
-            ),
-          ],
-        ),
-        content: SingleChildScrollView(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'ESP32 has connected to your WiFi, but we cannot detect it automatically.',
-                style: AppTextStyles.bodyMedium,
-              ),
+            if (newIP != null) ...[
               const SizedBox(height: 16),
               Container(
-                padding: const EdgeInsets.all(16),
+                padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: AppColors.warning.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                  color: AppColors.info.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.info),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     Text(
-                      'Follow these steps:',
-                      style: AppTextStyles.titleSmall.copyWith(
+                      'New IP Address:',
+                      style: AppTextStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      newIP,
+                      style: AppTextStyles.titleMedium.copyWith(
+                        color: AppColors.info,
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    const SizedBox(height: 12),
-                    _buildInstructionStep(
-                        '1', 'Open your phone\'s WiFi settings'),
-                    _buildInstructionStep(
-                        '2', 'Disconnect from "RoadSafe-AI-Setup"'),
-                    _buildInstructionStep('3', 'Connect to "$_selectedSSID"'),
-                    _buildInstructionStep(
-                        '4', 'Return to this app and enter IP manually'),
                   ],
                 ),
               ),
-              const SizedBox(height: 16),
-              Text(
-                'If you know the ESP32\'s IP address, you can enter it manually below.',
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-              ),
             ],
-          ),
+            const SizedBox(height: 16),
+            Text(
+              'Please reconnect your phone to your regular WiFi network, then return to the app.',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: Colors.black54,
+              ),
+            ),
+          ],
         ),
         actions: [
-          OutlinedButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              setState(() {
-                _showManualIPEntry = true;
-              });
-            },
-            style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.primary,
-              side: const BorderSide(color: AppColors.primary),
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-            ),
-            child: const Text('Enter IP Manually'),
-          ),
           ElevatedButton(
             onPressed: () {
               Navigator.pop(context); // Close dialog
-              _retryDiscovery();
+              Navigator.pop(context, newIP); // Return to setup page with IP
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
               padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: const Text('Retry Discovery'),
+            child: const Text('Done'),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildInstructionStep(String number, String text) {
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('Configure WiFi', style: AppTextStyles.headlineMedium),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            onPressed: _checkESP32Connection,
+            tooltip: 'Refresh Connection',
+          ),
+        ],
+      ),
+      body: _isCheckingConnection
+          ? _buildCheckingState()
+          : !_isConnectedToESP32
+              ? _buildNotConnectedState()
+              : _buildConnectedState(),
+    );
+  }
+
+  Widget _buildCheckingState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const CircularProgressIndicator(color: AppColors.primary),
+          const SizedBox(height: 24),
+          Text(
+            'Checking ESP32 connection...',
+            style: AppTextStyles.titleMedium,
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Please wait',
+            style: AppTextStyles.bodyMedium.copyWith(color: Colors.black54),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotConnectedState() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.wifi_off,
+              size: 80,
+              color: AppColors.error.withOpacity(0.5),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Not Connected to ESP32',
+              style: AppTextStyles.headlineSmall,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.error.withOpacity(0.3)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (_currentSSID != null) ...[
+                    Text(
+                      'Currently connected to:',
+                      style: AppTextStyles.labelMedium,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      _currentSSID!,
+                      style: AppTextStyles.titleMedium.copyWith(
+                        color: AppColors.error,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                  Text(
+                    'Expected network:',
+                    style: AppTextStyles.labelMedium,
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    ESP32_AP_SSID,
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: AppColors.success,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 24),
+            Text(
+              'Please follow these steps:',
+              style: AppTextStyles.titleMedium.copyWith(
+                fontWeight: FontWeight.bold,
+              ),
+            ),
+            const SizedBox(height: 16),
+            _buildInstructionStep(
+              1,
+              'Power on your ESP32-CAM device',
+            ),
+            _buildInstructionStep(
+              2,
+              'Open phone WiFi settings',
+            ),
+            _buildInstructionStep(
+              3,
+              'Connect to "$ESP32_AP_SSID" network',
+            ),
+            _buildInstructionStep(
+              4,
+              'Return to this app and tap "Retry"',
+            ),
+            const SizedBox(height: 24),
+            ElevatedButton.icon(
+              onPressed: _checkESP32Connection,
+              icon: const Icon(Icons.refresh),
+              label: const Text('Retry Connection'),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 32,
+                  vertical: 16,
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextButton.icon(
+              onPressed: () {
+                // Open WiFi settings
+                print('Opening WiFi settings...');
+                // Note: You'll need to add the url_launcher package
+                // and implement platform-specific WiFi settings opening
+              },
+              icon: const Icon(Icons.settings),
+              label: const Text('Open WiFi Settings'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInstructionStep(int number, String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.only(bottom: 12),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
-            width: 24,
-            height: 24,
+            width: 32,
+            height: 32,
             decoration: BoxDecoration(
-              color: AppColors.warning,
+              color: AppColors.primary,
               shape: BoxShape.circle,
             ),
             child: Center(
               child: Text(
-                number,
-                style: AppTextStyles.labelSmall.copyWith(
+                '$number',
+                style: AppTextStyles.labelLarge.copyWith(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,
                 ),
@@ -498,552 +556,213 @@ class _WiFiConfigPageState extends State<WiFiConfigPage>
     );
   }
 
-  Future<void> _retryDiscovery() async {
-    setState(() {
-      _isConnecting = true;
-      _statusMessage = 'Searching for ESP32...';
-    });
-
-    try {
-      print('🔍 Retrying UDP discovery...');
-      final devices = await CameraService().scanForDevices();
-
-      if (devices.isNotEmpty) {
-        final newIp = devices.first.ipAddress;
-        print('✅ Found ESP32 at: $newIp');
-
-        setState(() {
-          _detectedIP = newIp;
-          _statusMessage = 'Found device at $newIp!';
-          _connectionSuccess = true;
-          _isConnecting = false;
-        });
-
-        _showSuccessDialog(newIp);
-      } else {
-        throw Exception('Device not found');
-      }
-    } catch (e) {
-      print('❌ Retry failed: $e');
-      setState(() {
-        _isConnecting = false;
-      });
-      _showSnackBar('Device not found. Try manual IP entry.', AppColors.error);
-      setState(() {
-        _showManualIPEntry = true;
-      });
-    }
-  }
-
-  void _submitManualIP() {
-    final manualIP = _manualIPController.text.trim();
-
-    if (manualIP.isEmpty) {
-      _showSnackBar('Please enter an IP address', AppColors.warning);
-      return;
-    }
-
-    // Basic IP validation
-    final ipRegex = RegExp(r'^(\d{1,3}\.){3}\d{1,3}$');
-    if (!ipRegex.hasMatch(manualIP)) {
-      _showSnackBar('Invalid IP address format', AppColors.error);
-      return;
-    }
-
-    print('✅ Manual IP entered: $manualIP');
-
-    setState(() {
-      _detectedIP = manualIP;
-      _connectionSuccess = true;
-    });
-
-    _showSuccessDialog(manualIP);
-  }
-
-  void _showSnackBar(String message, Color color) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: color,
-        behavior: SnackBarBehavior.floating,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      body: FadeTransition(
-        opacity: _fadeAnimation,
-        child: CustomScrollView(
-          slivers: [
-            // App Bar
-            SliverAppBar(
-              expandedHeight: 200,
-              floating: false,
-              pinned: true,
-              elevation: 0,
-              backgroundColor: Colors.transparent,
-              leading: IconButton(
-                icon: Container(
-                  padding: const EdgeInsets.all(8),
-                  decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.2),
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: const Icon(Icons.arrow_back_rounded,
-                      color: Colors.white, size: 20),
-                ),
-                onPressed: () => Navigator.pop(context),
-              ),
-              flexibleSpace: FlexibleSpaceBar(
-                background: Stack(
-                  fit: StackFit.expand,
-                  children: [
-                    Container(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topLeft,
-                          end: Alignment.bottomRight,
-                          colors: AppColors.primaryGradient,
-                        ),
-                      ),
-                    ),
-                    Positioned(
-                      bottom: 40,
-                      left: 24,
-                      right: 24,
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Icon(Icons.wifi_rounded,
-                              color: Colors.white, size: 48),
-                          const SizedBox(height: 12),
-                          Text(
-                            'WiFi Configuration',
-                            style: AppTextStyles.headlineMedium.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            'Connect ESP32 to your network',
-                            style: AppTextStyles.bodyMedium.copyWith(
-                              color: Colors.white.withOpacity(0.9),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ],
-                ),
-              ),
+  Widget _buildConnectedState() {
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          // Success indicator
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppColors.success.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppColors.success),
             ),
-
-            // Content
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.all(24),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // Status Message
-                    if (_statusMessage.isNotEmpty)
-                      Container(
-                        padding: const EdgeInsets.all(16),
-                        margin: const EdgeInsets.only(bottom: 24),
-                        decoration: BoxDecoration(
-                          color: _connectionSuccess
-                              ? AppColors.success.withOpacity(0.1)
-                              : AppColors.info.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(
-                            color: _connectionSuccess
-                                ? AppColors.success.withOpacity(0.3)
-                                : AppColors.info.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              _connectionSuccess
-                                  ? Icons.check_circle
-                                  : Icons.info_outline,
-                              color: _connectionSuccess
-                                  ? AppColors.success
-                                  : AppColors.info,
-                            ),
-                            const SizedBox(width: 12),
-                            Expanded(
-                              child: Text(
-                                _statusMessage,
-                                style: AppTextStyles.bodyMedium,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-
-                    // Manual IP Entry Section
-                    if (_showManualIPEntry) ...[
-                      Container(
-                        padding: const EdgeInsets.all(20),
-                        decoration: BoxDecoration(
-                          color: AppColors.surfaceVariant,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(
-                            color: AppColors.primary.withOpacity(0.3),
-                          ),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                const Icon(Icons.edit,
-                                    color: AppColors.primary),
-                                const SizedBox(width: 8),
-                                Text(
-                                  'Manual IP Entry',
-                                  style: AppTextStyles.titleMedium.copyWith(
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 12),
-                            Text(
-                              'Enter the IP address of your ESP32-CAM device',
-                              style: AppTextStyles.bodySmall.copyWith(
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            TextField(
-                              controller: _manualIPController,
-                              keyboardType: TextInputType.numberWithOptions(
-                                  decimal: true),
-                              decoration: InputDecoration(
-                                hintText: 'e.g., 192.168.1.100',
-                                prefixIcon: const Icon(Icons.router),
-                                border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(12),
-                                ),
-                                filled: true,
-                                fillColor: Colors.white,
-                              ),
-                            ),
-                            const SizedBox(height: 16),
-                            SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton.icon(
-                                onPressed: _submitManualIP,
-                                icon: const Icon(Icons.check),
-                                label: const Text('Use This IP'),
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: AppColors.primary,
-                                  foregroundColor: Colors.white,
-                                  padding:
-                                      const EdgeInsets.symmetric(vertical: 16),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                      const SizedBox(height: 24),
-                      const Divider(),
-                      const SizedBox(height: 24),
-                    ],
-
-                    // Network List Title
-                    Text(
-                      'Available Networks',
-                      style: AppTextStyles.titleLarge.copyWith(
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                    const SizedBox(height: 16),
-
-                    // Loading or Networks List
-                    if (_isScanning)
-                      Center(
-                        child: Column(
-                          children: [
-                            const CircularProgressIndicator(),
-                            const SizedBox(height: 16),
-                            Text(
-                              'Scanning for WiFi networks...',
-                              style: AppTextStyles.bodyMedium.copyWith(
-                                color: AppColors.textSecondary,
-                              ),
-                            ),
-                          ],
-                        ),
-                      )
-                    else if (_networks.isEmpty)
-                      Center(
-                        child: Column(
-                          children: [
-                            const Icon(Icons.wifi_off,
-                                size: 64, color: AppColors.textSecondary),
-                            const SizedBox(height: 16),
-                            Text(
-                              'No networks found',
-                              style: AppTextStyles.bodyMedium,
-                            ),
-                            const SizedBox(height: 24),
-                            ElevatedButton.icon(
-                              onPressed: _scanNetworks,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('Scan Again'),
-                            ),
-                          ],
-                        ),
-                      )
-                    else
-                      ListView.builder(
-                        shrinkWrap: true,
-                        physics: const NeverScrollableScrollPhysics(),
-                        itemCount: _networks.length,
-                        itemBuilder: (context, index) {
-                          final network = _networks[index];
-                          final isSelected = _selectedSSID == network.ssid;
-
-                          return GlassCard(
-                            margin: const EdgeInsets.only(bottom: 12),
-                            padding: EdgeInsets.zero,
-                            child: InkWell(
-                              onTap: () {
-                                setState(() {
-                                  _selectedSSID = network.ssid;
-                                  _showManualIPEntry =
-                                      false; // Hide manual entry when selecting network
-                                });
-                              },
-                              borderRadius: BorderRadius.circular(16),
-                              child: Padding(
-                                padding: const EdgeInsets.all(16),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 48,
-                                      height: 48,
-                                      decoration: BoxDecoration(
-                                        color: isSelected
-                                            ? AppColors.primary.withOpacity(0.1)
-                                            : AppColors.background,
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                      child: Icon(
-                                        network.getSignalIcon(),
-                                        color: isSelected
-                                            ? AppColors.primary
-                                            : network.getSignalColor(),
-                                        size: 24,
-                                      ),
-                                    ),
-                                    const SizedBox(width: 16),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            network.ssid,
-                                            style: AppTextStyles.titleMedium
-                                                .copyWith(
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 4),
-                                          Row(
-                                            children: [
-                                              Icon(
-                                                network.encryption == 'Open'
-                                                    ? Icons.lock_open_rounded
-                                                    : Icons.lock_rounded,
-                                                size: 14,
-                                                color: AppColors.textSecondary,
-                                              ),
-                                              const SizedBox(width: 4),
-                                              Text(
-                                                '${network.rssi} dBm • ${network.encryption}',
-                                                style: AppTextStyles.bodySmall
-                                                    .copyWith(
-                                                  color:
-                                                      AppColors.textSecondary,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    if (isSelected)
-                                      const Icon(
-                                        Icons.check_circle_rounded,
-                                        color: AppColors.primary,
-                                      ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          );
-                        },
-                      ),
-
-                    const SizedBox(height: 24),
-
-                    // Password Input
-                    if (_selectedSSID != null) ...[
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.check_circle,
+                  color: AppColors.success,
+                  size: 32,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                       Text(
-                        'WiFi Password',
-                        style: AppTextStyles.titleLarge.copyWith(
+                        'Connected to ESP32',
+                        style: AppTextStyles.titleMedium.copyWith(
+                          color: AppColors.success,
                           fontWeight: FontWeight.bold,
                         ),
                       ),
-                      const SizedBox(height: 12),
-
-                      GlassCard(
-                        padding: const EdgeInsets.all(4),
-                        child: TextField(
-                          controller: _passwordController,
-                          obscureText: _obscurePassword,
-                          decoration: InputDecoration(
-                            hintText: 'Enter WiFi password',
-                            prefixIcon: const Icon(Icons.lock_rounded),
-                            suffixIcon: IconButton(
-                              icon: Icon(
-                                _obscurePassword
-                                    ? Icons.visibility_rounded
-                                    : Icons.visibility_off_rounded,
-                              ),
-                              onPressed: () {
-                                setState(() {
-                                  _obscurePassword = !_obscurePassword;
-                                });
-                              },
-                            ),
-                            border: InputBorder.none,
-                            contentPadding: const EdgeInsets.all(16),
-                          ),
-                        ),
-                      ),
-
-                      const SizedBox(height: 24),
-
-                      // Connect Button
-                      SizedBox(
-                        width: double.infinity,
-                        height: 56,
-                        child: ElevatedButton(
-                          onPressed: _isConnecting ? null : _connectToWiFi,
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: AppColors.primary,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(16),
-                            ),
-                            elevation: 0,
-                          ),
-                          child: _isConnecting
-                              ? const SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    color: Colors.white,
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    const Icon(Icons.wifi_rounded),
-                                    const SizedBox(width: 12),
-                                    Text(
-                                      'Connect to WiFi',
-                                      style: AppTextStyles.titleMedium.copyWith(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.bold,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                        ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'Network: ${_currentSSID ?? ESP32_AP_SSID}',
+                        style: AppTextStyles.bodySmall,
                       ),
                     ],
-
-                    // Rescan Button
-                    if (!_isScanning) ...[
-                      const SizedBox(height: 16),
-                      Center(
-                        child: TextButton.icon(
-                          onPressed: _scanNetworks,
-                          icon: const Icon(Icons.refresh_rounded),
-                          label: const Text('Rescan Networks'),
-                        ),
-                      ),
-                    ],
-
-                    const SizedBox(height: 32),
-                  ],
+                  ),
                 ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 24),
+
+          // Network selection
+          Text(
+            'Select WiFi Network',
+            style: AppTextStyles.titleLarge.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Choose the network you want your ESP32 to connect to',
+            style: AppTextStyles.bodyMedium.copyWith(color: Colors.black54),
+          ),
+          const SizedBox(height: 16),
+
+          // Available networks list
+          if (_isScanning)
+            const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: CircularProgressIndicator(color: AppColors.primary),
+              ),
+            )
+          else if (_availableNetworks.isEmpty)
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: Colors.grey.shade100,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  const Icon(Icons.wifi_off, size: 48, color: Colors.grey),
+                  const SizedBox(height: 8),
+                  Text(
+                    'No networks found',
+                    style: AppTextStyles.bodyMedium,
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton.icon(
+                    onPressed: _scanAvailableNetworks,
+                    icon: const Icon(Icons.refresh),
+                    label: const Text('Scan Again'),
+                  ),
+                ],
+              ),
+            )
+          else
+            Container(
+              decoration: BoxDecoration(
+                border: Border.all(color: Colors.grey.shade300),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Column(
+                children: [
+                  for (var network in _availableNetworks)
+                    ListTile(
+                      leading: const Icon(Icons.wifi, color: AppColors.primary),
+                      title: Text(network),
+                      trailing: _ssidController.text == network
+                          ? const Icon(Icons.check, color: AppColors.success)
+                          : null,
+                      onTap: () {
+                        setState(() {
+                          _ssidController.text = network;
+                        });
+                      },
+                    ),
+                ],
+              ),
+            ),
+
+          const SizedBox(height: 24),
+
+          // Password input
+          Text(
+            'WiFi Password',
+            style: AppTextStyles.titleMedium.copyWith(
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _passwordController,
+            obscureText: _obscurePassword,
+            decoration: InputDecoration(
+              hintText: 'Enter WiFi password',
+              prefixIcon: const Icon(Icons.lock_outline),
+              suffixIcon: IconButton(
+                icon: Icon(
+                  _obscurePassword ? Icons.visibility : Icons.visibility_off,
+                ),
+                onPressed: () {
+                  setState(() {
+                    _obscurePassword = !_obscurePassword;
+                  });
+                },
+              ),
+              border: OutlineInputBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 32),
+
+          // Configure button
+          ElevatedButton(
+            onPressed: _isLoading ? null : _configureWiFi,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+            child: _isLoading
+                ? const SizedBox(
+                    height: 20,
+                    width: 20,
+                    child: CircularProgressIndicator(
+                      color: Colors.white,
+                      strokeWidth: 2,
+                    ),
+                  )
+                : Text(
+                    'Configure WiFi',
+                    style: AppTextStyles.titleMedium.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.bold,
+                    ),
+                  ),
+          ),
+
+          if (_errorMessage != null) ...[
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.error.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.error),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.error_outline, color: AppColors.error),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      _errorMessage!,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.error,
+                      ),
+                    ),
+                  ),
+                ],
               ),
             ),
           ],
-        ),
+        ],
       ),
     );
-  }
-}
-
-// WiFi Network Model
-class WiFiNetwork {
-  final String ssid;
-  final int rssi;
-  final String encryption;
-
-  WiFiNetwork({
-    required this.ssid,
-    required this.rssi,
-    required this.encryption,
-  });
-
-  factory WiFiNetwork.fromJson(Map<String, dynamic> json) {
-    return WiFiNetwork(
-      ssid: json['ssid'],
-      rssi: json['rssi'],
-      encryption: json['encryption'],
-    );
-  }
-
-  IconData getSignalIcon() {
-    if (rssi >= -50) return Icons.signal_wifi_4_bar;
-    if (rssi >= -60) return Icons.signal_wifi_4_bar;
-    if (rssi >= -70) return Icons.network_wifi_3_bar;
-    if (rssi >= -80) return Icons.network_wifi_2_bar;
-    return Icons.network_wifi_1_bar;
-  }
-
-  Color getSignalColor() {
-    if (rssi >= -50) return AppColors.success;
-    if (rssi >= -60) return AppColors.success;
-    if (rssi >= -70) return AppColors.warning;
-    if (rssi >= -80) return AppColors.error;
-    return AppColors.error;
-  }
-
-  String getSignalStrength() {
-    if (rssi >= -50) return 'Excellent';
-    if (rssi >= -60) return 'Good';
-    if (rssi >= -70) return 'Fair';
-    if (rssi >= -80) return 'Weak';
-    return 'Very Weak';
   }
 }
