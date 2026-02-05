@@ -879,7 +879,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
               SizedBox(
                 width: double.infinity,
                 child: ElevatedButton.icon(
-                  onPressed: _skipToPositioning,
+                  onPressed: _goToConfiguredStep,
                   icon: const Icon(Icons.videocam),
                   label: const Text('WiFi Configured - Position Camera'),
                   style: ElevatedButton.styleFrom(
@@ -894,6 +894,46 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         ),
       ],
     );
+  }
+
+  Future<void> _goToConfiguredStep() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Checking for configured device...';
+    });
+
+    try {
+      final cachedIP = await CameraService().getCachedDeviceIP();
+
+      setState(() {
+        _configuredIP = cachedIP;
+        _currentStep = 2; // Show Connect/Reset step so user sees IP and reset
+        _isLoading = false;
+        _statusMessage = '';
+      });
+
+      // Optionally try a quick connect in background (do not auto-navigate)
+      Future(() async {
+        try {
+          final success = await CameraService().quickConnect();
+          if (success && mounted) {
+            // keep user on the Connect screen — they can press Connect
+            setState(() async {
+              _configuredIP = await CameraService().getCachedDeviceIP();
+            });
+          }
+        } catch (_) {}
+      });
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+        _statusMessage = '';
+      });
+      // Still show the connect step so user can attempt reset or manual connect
+      setState(() {
+        _currentStep = 2;
+      });
+    }
   }
 
   Widget _buildNumberedInstruction(int number, String text) {
