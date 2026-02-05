@@ -67,7 +67,7 @@ class CameraService {
     }
   }
 
-  Future<String?> _getCachedDeviceIP() async {
+  Future<String?> getCachedDeviceIP() async {
     try {
       final prefs = await SharedPreferences.getInstance();
       final cachedIP = prefs.getString('esp32_last_ip');
@@ -106,7 +106,7 @@ class CameraService {
   Future<bool> quickConnect() async {
     print('\n⚡ Attempting quick connect...');
 
-    final cachedIP = await _getCachedDeviceIP();
+    final cachedIP = await getCachedDeviceIP();
     if (cachedIP == null) {
       print('❌ No cached IP available');
       return false;
@@ -133,7 +133,7 @@ class CameraService {
 
     // STEP 1: Try cached IP first
     print('🔍 Step 1: Checking cached IP...');
-    final cachedIP = await _getCachedDeviceIP();
+    final cachedIP = await getCachedDeviceIP();
     if (cachedIP != null) {
       final device = await _checkESP32Device(cachedIP);
       if (device != null) {
@@ -489,7 +489,7 @@ class CameraService {
         }
 
         if (activeDevices.isEmpty) {
-          final cachedIP = await _getCachedDeviceIP();
+          final cachedIP = await getCachedDeviceIP();
           if (cachedIP != null) {
             final device = await _checkESP32Device(cachedIP);
             if (device != null) {

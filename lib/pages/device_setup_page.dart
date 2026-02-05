@@ -36,6 +36,82 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   // ============================================
+  // SKIP TO POSITIONING (WiFi Already Configured)
+  // ============================================
+
+  Future<void> _skipToPositioning() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Checking for ESP32...';
+    });
+
+    try {
+      // Try to get cached/last known IP
+      final cachedIP = await CameraService().getCachedDeviceIP();
+
+      if (cachedIP != null) {
+        print('📦 Found cached IP: $cachedIP');
+
+        // Try to connect to cached IP
+        setState(() {
+          _statusMessage = 'Connecting to $cachedIP...';
+        });
+
+        final device = ESP32Device(
+          ipAddress: cachedIP,
+          deviceName: 'RoadSafe AI - ESP32-CAM',
+          isConnected: false,
+        );
+
+        final success = await CameraService().connectToDevice(device);
+
+        setState(() {
+          _isLoading = false;
+        });
+
+        if (success) {
+          // Go directly to camera positioning
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CameraPositioningPage(deviceIP: cachedIP),
+            ),
+          );
+        } else {
+          throw Exception('Cannot connect to $cachedIP');
+        }
+      } else {
+        setState(() {
+          _isLoading = false;
+        });
+
+        _showError(
+          'No Configured Device',
+          'No previously configured ESP32 found.\n\n'
+              'Please complete the WiFi configuration first:\n'
+              '1. Connect to "RoadSafe-AI-Setup"\n'
+              '2. Configure your home WiFi\n'
+              '3. Then you can use this shortcut',
+        );
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+
+      _showError(
+        'Connection Failed',
+        'Could not connect to your configured ESP32.\n\n'
+            'This could mean:\n'
+            '• ESP32 is powered off\n'
+            '• ESP32 is not on the WiFi network\n'
+            '• WiFi configuration was reset\n\n'
+            'Please complete the setup process.',
+      );
+    }
+  }
+
+  // ============================================
   // STEP 1: Configure WiFi IN APP
   // ============================================
 
@@ -763,6 +839,58 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           text: 'Connected - Continue',
           icon: Icons.arrow_forward,
           gradientColors: AppColors.successGradient,
+        ),
+        const SizedBox(height: 16),
+
+        // NEW: WiFi Already Configured Button
+        Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: AppColors.success.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: AppColors.success.withOpacity(0.3)),
+          ),
+          child: Column(
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.check_circle,
+                      color: AppColors.success, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'WiFi Already Configured?',
+                      style: AppTextStyles.labelMedium.copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Text(
+                'If you\'ve already configured WiFi before, skip setup and go directly to camera positioning.',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _skipToPositioning,
+                  icon: const Icon(Icons.videocam),
+                  label: const Text('WiFi Configured - Position Camera'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.success,
+                    foregroundColor: Colors.white,
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ],
     );
