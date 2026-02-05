@@ -8,6 +8,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/gradient_button.dart';
 import '../services/camera_service.dart';
+import '../services/drowsiness_service.dart';
 import 'camera_positioning_page.dart';
 import 'wifi_config_page.dart'; // IMPORTANT: Add this import
 
@@ -157,6 +158,10 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
         // Save IP to camera service
         await CameraService().setDiscoveredIP(result);
+        // Inform drowsiness detector of the device IP so alarms can be sent
+        try {
+          DrowsinessDetector.setESP32IP(result);
+        } catch (_) {}
       } else {
         print('⚠️ WiFi configuration cancelled or failed');
       }
@@ -439,6 +444,9 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         try {
           await CameraService().clearCachedDevice();
           CameraService().disconnect();
+          try {
+            DrowsinessDetector.setESP32IP('');
+          } catch (_) {}
         } catch (_) {}
 
         setState(() {
@@ -957,6 +965,12 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         _isLoading = false;
         _statusMessage = '';
       });
+
+      if (cachedIP != null) {
+        try {
+          DrowsinessDetector.setESP32IP(cachedIP);
+        } catch (_) {}
+      }
 
       // Optionally try a quick connect in background (do not auto-navigate)
       Future(() async {

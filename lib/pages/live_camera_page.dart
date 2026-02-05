@@ -199,6 +199,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         setState(() {
           _isConnected = true;
           _currentDeviceIP = _cameraService.connectedDevice?.ipAddress;
+          if (_currentDeviceIP != null) {
+            DrowsinessDetector.setESP32IP(_currentDeviceIP!);
+          }
         });
         _showMessage('Connected to ESP32-CAM', AppColors.success);
       } else {
@@ -228,6 +231,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
           setState(() {
             _isConnected = true;
             _currentDeviceIP = devices.first.ipAddress;
+            DrowsinessDetector.setESP32IP(_currentDeviceIP!);
           });
           _showMessage('Connected to ESP32-CAM', AppColors.success);
         }
