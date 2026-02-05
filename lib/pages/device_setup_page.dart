@@ -113,20 +113,42 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
               'Would you like to use this configuration or set up a new one?',
               style: AppTextStyles.bodySmall,
             ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.info_outline,
+                      color: AppColors.warning, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'New Setup requires resetting WiFi first',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.warning,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ],
         ),
         actions: [
           OutlinedButton(
             onPressed: () {
               Navigator.pop(context);
-              // Start fresh setup
-              setState(() {
-                _currentStep = 0;
-              });
+              // Navigate to Forget WiFi screen (not Step 0!)
+              _showForgetWiFiForNewSetup();
             },
             style: OutlinedButton.styleFrom(
-              foregroundColor: AppColors.textSecondary,
-              side: BorderSide(color: AppColors.textSecondary.withOpacity(0.3)),
+              foregroundColor: AppColors.warning,
+              side: const BorderSide(color: AppColors.warning),
             ),
             child: const Text('New Setup'),
           ),
@@ -722,6 +744,257 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   // FORGET WIFI (IMPROVED - NO NETWORK DEPENDENCY)
   // ============================================
 
+  void _showForgetWiFiForNewSetup() {
+    showDialog(
+      context: context,
+      barrierDismissible: false, // Force user to choose
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: Row(
+          children: [
+            const Icon(Icons.wifi_off, color: AppColors.warning),
+            const SizedBox(width: 8),
+            const Expanded(
+              child: Text('Reset ESP32 WiFi'),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'To start a new setup, ESP32 must be reset to broadcast "RoadSafe-AI-Setup" WiFi.',
+                style: AppTextStyles.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.warning.withOpacity(0.3)),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      'Choose reset method:',
+                      style: AppTextStyles.titleSmall.copyWith(
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '📡 Software Reset',
+                      style: AppTextStyles.labelLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.primary,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '• Sends reset command to ESP32\n• Works if ESP32 is reachable',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                    const SizedBox(height: 12),
+                    Text(
+                      '🔌 Hardware Reset',
+                      style: AppTextStyles.labelLarge.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.warning,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '• Manual button press\n• Always works, even if ESP32 is offline',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.info.withOpacity(0.3)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline,
+                        color: AppColors.info, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'After reset, "RoadSafe-AI-Setup" WiFi will appear',
+                        style: AppTextStyles.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          OutlinedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              // User cancelled, stay on current state
+            },
+            child: const Text('Cancel'),
+          ),
+          OutlinedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _showHardwareResetInstructions();
+            },
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.warning,
+              side: const BorderSide(color: AppColors.warning),
+            ),
+            child: const Text('Hardware Reset'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              _attemptSoftwareResetForNewSetup();
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Software Reset'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _attemptSoftwareResetForNewSetup() async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Resetting ESP32 WiFi configuration...';
+    });
+
+    try {
+      print('\n🔄 ATTEMPTING SOFTWARE RESET FOR NEW SETUP');
+      print('========================================');
+
+      final cachedIP = await CameraService().getCachedDeviceIP();
+
+      if (cachedIP == null) {
+        throw Exception('No cached IP available');
+      }
+
+      print('Target IP: $cachedIP');
+
+      final response = await http.post(
+        Uri.parse('http://$cachedIP/reset'),
+        headers: {'Content-Type': 'application/json'},
+      ).timeout(const Duration(seconds: 10));
+
+      print('Response: ${response.statusCode}');
+
+      if (response.statusCode == 200) {
+        print('✅ Reset command sent successfully');
+
+        // Clear local cache
+        await CameraService().clearCachedDevice();
+
+        setState(() {
+          _isLoading = false;
+          _configuredIP = null;
+          _connectionTested = false;
+          _currentStep = 0; // NOW go to Step 0
+        });
+
+        if (mounted) {
+          _showSuccessDialog(
+            'WiFi Reset Successful',
+            'ESP32 has been reset to setup mode.\n\n'
+                '1. ESP32 will restart (wait 10 seconds)\n'
+                '2. Connect your phone to "RoadSafe-AI-Setup" WiFi\n'
+                '3. Return to this app to continue setup',
+          );
+        }
+      } else {
+        throw Exception('HTTP ${response.statusCode}');
+      }
+
+      print('========================================\n');
+    } catch (e) {
+      print('❌ Software reset failed: $e');
+      print('========================================\n');
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      // If software reset fails, offer hardware reset
+      if (mounted) {
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            shape:
+                RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+            title: Row(
+              children: [
+                const Icon(Icons.error_outline, color: AppColors.error),
+                const SizedBox(width: 8),
+                const Text('Software Reset Failed'),
+              ],
+            ),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Cannot connect to ESP32 to send reset command.',
+                  style: AppTextStyles.bodyMedium,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'This is normal if:\n'
+                  '• ESP32 is powered off\n'
+                  '• ESP32 is on a different network\n'
+                  '• Phone cannot reach ESP32',
+                  style: AppTextStyles.bodySmall,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Try Hardware Reset instead.',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              OutlinedButton(
+                onPressed: () => Navigator.pop(context),
+                child: const Text('Cancel'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showHardwareResetInstructions();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.warning,
+                ),
+                child: const Text('Hardware Reset'),
+              ),
+            ],
+          ),
+        );
+      }
+    }
+  }
+
   void _showForgetWiFiDialog() {
     showDialog(
       context: context,
@@ -1015,6 +1288,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   void _showHardwareResetInstructions() {
     showDialog(
       context: context,
+      barrierDismissible: false, // User must confirm completion
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         title: Row(
@@ -1044,8 +1318,9 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
               _buildNumberedStep('4', 'Keep holding reset, reconnect power'),
               _buildNumberedStep('5', 'Hold for 3 more seconds, then release'),
               _buildNumberedStep('6', 'ESP32 will restart in setup mode'),
-              _buildNumberedStep(
-                  '7', 'Look for "RoadSafe-AI-Setup" WiFi network'),
+              _buildNumberedStep('7', 'Wait 10 seconds for ESP32 to boot'),
+              _buildNumberedStep('8',
+                  'Look for "RoadSafe-AI-Setup" WiFi network on your phone'),
               const SizedBox(height: 16),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -1061,7 +1336,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
-                        'After reset, the app cache will be cleared automatically.',
+                        'After confirming reset, connect to "RoadSafe-AI-Setup" WiFi and return to this app',
                         style: AppTextStyles.bodySmall,
                       ),
                     ),
@@ -1083,11 +1358,11 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                 setState(() {
                   _configuredIP = null;
                   _connectionTested = false;
-                  _currentStep = 0;
+                  _currentStep = 0; // Go to Step 0 (Welcome screen)
                 });
 
                 _showSnackBar(
-                  'App cache cleared. Ready for new setup.',
+                  'WiFi reset complete. Connect to "RoadSafe-AI-Setup" and continue setup.',
                   AppColors.success,
                 );
               }
@@ -1095,8 +1370,9 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
-            child: const Text('I Did The Reset'),
+            child: const Text('I Completed The Reset'),
           ),
         ],
       ),
