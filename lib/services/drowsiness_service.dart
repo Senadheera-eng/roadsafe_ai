@@ -78,6 +78,16 @@ class DrowsinessDetector {
   static Timer? _vibrationTimer;
   static bool _isVibrating = false;
 
+  // ✅ NEW: ESP32 alarm control
+  static String? _esp32IP;
+  static bool _esp32AlarmActive = false;
+
+  // ✅ NEW: Set ESP32 IP address
+  static void setESP32IP(String ip) {
+    _esp32IP = ip;
+    print('🔧 ESP32 IP set to: $ip');
+  }
+
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {
     try {
       print('\n🔍 Analyzing frame (${imageBytes.length} bytes)...');
@@ -101,7 +111,7 @@ class DrowsinessDetector {
         final result = DrowsinessResult.fromJson(data);
 
         if (result.detectionBoxes.isNotEmpty) {
-          print('📊 Detections: ${result.detectionBoxes.length}');
+          print('🔊 Detections: ${result.detectionBoxes.length}');
           for (var box in result.detectionBoxes) {
             String status = '';
             if (box.isDrowsy) status += ' [DROWSY]';
@@ -125,15 +135,16 @@ class DrowsinessDetector {
     }
   }
 
-  // Start continuous vibration that doesn't stop until explicitly stopped
+  // Start continuous vibration
   static Future<void> startContinuousVibration() async {
     if (_isVibrating) {
       print('⚠️ Vibration already active');
       return;
     }
 
-    print('\n========================================');
-    print('📱 STARTING CONTINUOUS VIBRATION');
+    print('');
+    print('========================================');
+    print('🚨 STARTING CONTINUOUS VIBRATION');
     print('========================================');
 
     _isVibrating = true;
@@ -143,9 +154,8 @@ class DrowsinessDetector {
       print('📱 Device has vibrator: $hasVibrator');
 
       if (hasVibrator == true) {
-        // Start continuous vibration loop (repeats every 2 seconds)
         _vibrationTimer = Timer.periodic(
-          const Duration(milliseconds: 2000),
+          const Duration(milliseconds: 2500),
           (timer) async {
             if (!_isVibrating) {
               timer.cancel();
@@ -153,31 +163,41 @@ class DrowsinessDetector {
             }
 
             try {
-              // Aggressive vibration pattern
               await Vibration.vibrate(
                 pattern: [
-                  0, // Start immediately
-                  1000, // Vibrate 1 second
-                  200, // Pause 0.2 seconds
-                  1000, // Vibrate 1 second
-                  200, // Pause 0.2 seconds
-                  1000, // Vibrate 1 second
+                  0,
+                  800,
+                  100,
+                  800,
+                  100,
+                  800,
+                  200,
+                  500,
+                  100,
+                  500,
+                  100,
+                  500,
                 ],
                 intensities: [
-                  0, // No vibration
-                  255, // Max intensity
-                  0, // No vibration
-                  255, // Max intensity
-                  0, // No vibration
-                  255, // Max intensity
+                  0,
+                  255,
+                  0,
+                  255,
+                  0,
+                  255,
+                  0,
+                  255,
+                  0,
+                  255,
+                  0,
+                  255,
                 ],
               );
               print('📳 Vibration pattern executed');
             } catch (e) {
               print('⚠️ Vibration pattern error: $e');
-              // Fallback to simple continuous vibration
               try {
-                await Vibration.vibrate(duration: 1500, amplitude: 255);
+                await Vibration.vibrate(duration: 1000, amplitude: 255);
               } catch (e2) {
                 print('⚠️ Fallback vibration failed: $e2');
               }
@@ -186,9 +206,8 @@ class DrowsinessDetector {
         );
 
         print('✅ CONTINUOUS VIBRATION STARTED');
-        print('   Will repeat every 2 seconds until stopped');
       } else {
-        print('⚠️ No vibrator detected on this device');
+        print('⚠️ No vibrator detected');
         _isVibrating = false;
       }
     } catch (e) {
@@ -196,12 +215,14 @@ class DrowsinessDetector {
       _isVibrating = false;
     }
 
-    print('========================================\n');
+    print('========================================');
+    print('');
   }
 
   // Stop continuous vibration
   static Future<void> stopContinuousVibration() async {
-    print('\n========================================');
+    print('');
+    print('========================================');
     print('🛑 STOPPING CONTINUOUS VIBRATION');
     print('========================================');
 
@@ -211,16 +232,135 @@ class DrowsinessDetector {
 
     try {
       await Vibration.cancel();
-      print('✅ Vibration stopped successfully');
+      print('✅ Vibration stopped');
     } catch (e) {
       print('⚠️ Error stopping vibration: $e');
     }
 
-    print('========================================\n');
+    print('========================================');
+    print('');
   }
 
-  // Check if currently vibrating
+  // ✅ NEW: Start ESP32 buzzer alarm
+  static Future<void> startESP32Alarm() async {
+    if (_esp32IP == null) {
+      print('⚠️ ESP32 IP not set, cannot trigger alarm');
+      return;
+    }
+
+    if (_esp32AlarmActive) {
+      print('⚠️ ESP32 alarm already active');
+      return;
+    }
+
+    try {
+      print('');
+      print('========================================');
+      print('🔊 SENDING ALARM TO ESP32');
+      print('========================================');
+      print('   Target IP: $_esp32IP');
+
+      final response = await http
+          .post(
+            Uri.parse('http://$_esp32IP/alarm'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'command': 'ALARM_ON'}),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        _esp32AlarmActive = true;
+        print('✅ ESP32 ALARM ACTIVATED!');
+        print('   Response: ${response.body}');
+      } else {
+        print('❌ ESP32 alarm failed: ${response.statusCode}');
+        print('   Response: ${response.body}');
+      }
+
+      print('========================================');
+      print('');
+    } catch (e) {
+      print('❌ ESP32 alarm error: $e');
+    }
+  }
+
+  // ✅ NEW: Stop ESP32 buzzer alarm
+  static Future<void> stopESP32Alarm() async {
+    if (_esp32IP == null) {
+      print('⚠️ ESP32 IP not set');
+      return;
+    }
+
+    if (!_esp32AlarmActive) {
+      print('⚠️ ESP32 alarm not active');
+      return;
+    }
+
+    try {
+      print('');
+      print('========================================');
+      print('🔇 STOPPING ESP32 ALARM');
+      print('========================================');
+      print('   Target IP: $_esp32IP');
+
+      final response = await http
+          .post(
+            Uri.parse('http://$_esp32IP/alarm'),
+            headers: {'Content-Type': 'application/json'},
+            body: json.encode({'command': 'ALARM_OFF'}),
+          )
+          .timeout(const Duration(seconds: 5));
+
+      if (response.statusCode == 200) {
+        _esp32AlarmActive = false;
+        print('✅ ESP32 ALARM STOPPED!');
+        print('   Response: ${response.body}');
+      } else {
+        print('❌ ESP32 alarm stop failed: ${response.statusCode}');
+      }
+
+      print('========================================');
+      print('');
+    } catch (e) {
+      print('❌ ESP32 alarm stop error: $e');
+    }
+  }
+
+  // ✅ NEW: Trigger BOTH phone vibration AND ESP32 buzzer
+  static Future<void> triggerDrowsinessAlert() async {
+    print('');
+    print('╔════════════════════════════════════════╗');
+    print('║   🚨 DROWSINESS ALERT TRIGGERED! 🚨   ║');
+    print('╚════════════════════════════════════════╝');
+
+    // Start phone vibration
+    await startContinuousVibration();
+
+    // Start ESP32 buzzer
+    await startESP32Alarm();
+
+    print('');
+  }
+
+  // ✅ NEW: Stop BOTH phone vibration AND ESP32 buzzer
+  static Future<void> stopDrowsinessAlert() async {
+    print('');
+    print('╔════════════════════════════════════════╗');
+    print('║   ✅ DROWSINESS ALERT STOPPED          ║');
+    print('╚════════════════════════════════════════╝');
+
+    // Stop phone vibration
+    await stopContinuousVibration();
+
+    // Stop ESP32 buzzer
+    await stopESP32Alarm();
+
+    print('');
+  }
+
+  // Check if currently alerting
   static bool get isVibrating => _isVibrating;
+  static bool get isESP32AlarmActive => _esp32AlarmActive;
 }
 
 class DrowsinessResult {
