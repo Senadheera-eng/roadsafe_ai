@@ -394,12 +394,58 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         }
       }
 
+      // Additional fallback: scan network for ESP32 devices and try reset on any found
+      if (!success) {
+        setState(() {
+          _statusMessage = 'Scanning local network for device...';
+        });
+
+        try {
+          final found = await CameraService().scanForDevices();
+          for (final dev in found) {
+            if (success) break;
+            final ip = dev.ipAddress;
+            setState(() {
+              _statusMessage = 'Attempting reset at $ip...';
+            });
+            try {
+              final r = await http.post(
+                Uri.parse('http://$ip/reset'),
+                headers: {'Content-Type': 'application/json'},
+              ).timeout(const Duration(seconds: 8));
+
+              if (r.statusCode == 200) {
+                print('✅ Reset successful at $ip via scan');
+                success = true;
+                break;
+              }
+            } catch (e) {
+              print('⚠️ Reset failed at $ip: $e');
+              continue;
+            }
+          }
+        } catch (e) {
+          print('⚠️ Network scan for reset failed: $e');
+        }
+      }
+
       setState(() {
         _isLoading = false;
         _statusMessage = '';
       });
 
       if (success) {
+        // Clear cached device info and force UI back to step 1
+        try {
+          await CameraService().clearCachedDevice();
+          CameraService().disconnect();
+        } catch (_) {}
+
+        setState(() {
+          _configuredIP = null;
+          _currentStep = 0;
+        });
+
         _showResetSuccessDialog();
       } else {
         _showError(
