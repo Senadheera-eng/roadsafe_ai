@@ -10,7 +10,7 @@ import '../widgets/gradient_button.dart';
 import '../services/camera_service.dart';
 import '../services/drowsiness_service.dart';
 import 'camera_positioning_page.dart';
-import 'wifi_config_page.dart'; // IMPORTANT: Add this import
+import 'wifi_config_page.dart';
 
 class DeviceSetupPage extends StatefulWidget {
   const DeviceSetupPage({super.key});
@@ -34,6 +34,190 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   @override
   void dispose() {
     super.dispose();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  // MANUAL IP ENTRY DIALOG
+  // ═══════════════════════════════════════════════════════════
+  void _showManualIPDialog() {
+    final ipController = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                color: AppColors.primary.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Icon(Icons.edit_location_alt,
+                  color: AppColors.primary, size: 28),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(child: Text('Enter IP Manually')),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Skip WiFi configuration and connect directly using IP address.',
+                style: AppTextStyles.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.info),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        const Icon(Icons.info_outline,
+                            color: AppColors.info, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Requirements:',
+                          style: AppTextStyles.labelMedium.copyWith(
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '• ESP32 must be connected to WiFi\n'
+                      '• Your phone must be on same network\n'
+                      '• You must know the ESP32\'s IP address',
+                      style: AppTextStyles.bodySmall,
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: ipController,
+                decoration: const InputDecoration(
+                  labelText: 'ESP32 IP Address',
+                  hintText: '192.168.1.100',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.router),
+                  helperText: 'Example: 192.168.1.100',
+                ),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              final ip = ipController.text.trim();
+
+              if (!_isValidIP(ip)) {
+                _showError('Invalid IP',
+                    'Please enter a valid IP address (e.g., 192.168.1.100)');
+                return;
+              }
+
+              Navigator.pop(context); // Close dialog
+              await _connectToManualIP(ip);
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+            ),
+            icon: const Icon(Icons.check),
+            label: const Text('Connect'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _isValidIP(String ip) {
+    if (ip.isEmpty) return false;
+
+    final parts = ip.split('.');
+    if (parts.length != 4) return false;
+
+    for (final part in parts) {
+      final num = int.tryParse(part);
+      if (num == null || num < 0 || num > 255) return false;
+    }
+
+    return true;
+  }
+
+  Future<void> _connectToManualIP(String ip) async {
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Testing connection to $ip...';
+    });
+
+    try {
+      print('🔗 Testing manual IP: $ip');
+
+      // Test stream endpoint
+      final testResponse = await http
+          .get(Uri.parse('http://$ip/stream'))
+          .timeout(const Duration(seconds: 5));
+
+      if (testResponse.statusCode == 200 || testResponse.statusCode == 503) {
+        print('✅ ESP32 is reachable at $ip');
+
+        // Save IP
+        await CameraService().setDiscoveredIP(ip);
+        DrowsinessDetector.setESP32IP(ip);
+
+        setState(() {
+          _configuredIP = ip;
+          _isLoading = false;
+        });
+
+        // Go directly to positioning
+        if (mounted) {
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => CameraPositioningPage(deviceIP: ip),
+            ),
+          );
+        }
+      } else {
+        throw Exception('Device not responding correctly');
+      }
+    } catch (e) {
+      print('❌ Manual IP connection failed: $e');
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      _showError(
+        'Connection Failed',
+        'Could not connect to ESP32 at $ip\n\n'
+            'Please verify:\n'
+            '• ESP32 is powered on\n'
+            '• ESP32 is connected to WiFi\n'
+            '• Your phone is on same network\n'
+            '• IP address is correct\n\n'
+            'Error: $e',
+      );
+    }
   }
 
   // ============================================
@@ -86,13 +270,97 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           _isLoading = false;
         });
 
-        _showError(
-          'No Configured Device',
-          'No previously configured ESP32 found.\n\n'
-              'Please complete the WiFi configuration first:\n'
-              '1. Connect to "RoadSafe-AI-Setup"\n'
-              '2. Configure your home WiFi\n'
-              '3. Then you can use this shortcut',
+        // ✅ NEW: Instead of just showing error, offer manual IP option
+        showDialog(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('No Configured Device'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text(
+                  'No previously configured ESP32 found.\n\n'
+                  'You have two options:',
+                ),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.primary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.primary),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Option 1: Configure WiFi',
+                        style: AppTextStyles.labelMedium.copyWith(
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        '1. Connect to "RoadSafe-AI-Setup"\n'
+                        '2. Configure your home WiFi\n'
+                        '3. Position camera',
+                        style: AppTextStyles.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.success.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: AppColors.success),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        'Option 2: Manual IP (Faster)',
+                        style: AppTextStyles.labelMedium.copyWith(
+                          fontWeight: FontWeight.bold,
+                          color: AppColors.success,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        'If ESP32 is already on WiFi,\nenter IP directly and skip setup',
+                        style: AppTextStyles.bodySmall,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(context);
+                  setState(() {
+                    _currentStep = 0; // Go to step 1
+                  });
+                },
+                child: const Text('Configure WiFi'),
+              ),
+              ElevatedButton.icon(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _showManualIPDialog();
+                },
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppColors.success,
+                ),
+                icon: const Icon(Icons.edit_location_alt),
+                label: const Text('Enter IP Manually'),
+              ),
+            ],
+          ),
         );
       }
     } catch (e) {
@@ -100,14 +368,65 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         _isLoading = false;
       });
 
-      _showError(
-        'Connection Failed',
-        'Could not connect to your configured ESP32.\n\n'
-            'This could mean:\n'
-            '• ESP32 is powered off\n'
-            '• ESP32 is not on the WiFi network\n'
-            '• WiFi configuration was reset\n\n'
-            'Please complete the setup process.',
+      // ✅ NEW: Show error with manual IP option
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Connection Failed'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Could not connect to your configured ESP32.\n\n'
+                'This could mean:\n'
+                '• ESP32 is powered off\n'
+                '• ESP32 is not on the WiFi network\n'
+                '• WiFi configuration was reset',
+                style: AppTextStyles.bodyMedium,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.info.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppColors.info),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.lightbulb_outline,
+                        color: AppColors.info, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'You can enter the IP manually if you know it',
+                        style: AppTextStyles.bodySmall,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context),
+              child: const Text('Cancel'),
+            ),
+            ElevatedButton.icon(
+              onPressed: () {
+                Navigator.pop(context);
+                _showManualIPDialog();
+              },
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppColors.primary,
+              ),
+              icon: const Icon(Icons.edit_location_alt),
+              label: const Text('Manual IP'),
+            ),
+          ],
+        ),
       );
     }
   }
@@ -139,7 +458,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         _isLoading = false;
       });
 
-      // Open WiFi config page IN APP (not browser!)
+      // Open WiFi config page IN APP
       final result = await Navigator.push<String>(
         context,
         MaterialPageRoute(
@@ -158,7 +477,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
         // Save IP to camera service
         await CameraService().setDiscoveredIP(result);
-        // Inform drowsiness detector of the device IP so alarms can be sent
+        // Inform drowsiness detector
         try {
           DrowsinessDetector.setESP32IP(result);
         } catch (_) {}
@@ -235,7 +554,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   // ============================================
-  // FORGET WIFI (Using Stored IP - No Search!)
+  // FORGET WIFI
   // ============================================
 
   void _showForgetWiFiDialog() {
@@ -244,308 +563,65 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
       builder: (context) => AlertDialog(
         title: Row(
           children: [
-            const Icon(Icons.wifi_off, color: AppColors.warning),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                'Forget WiFi Network',
-                style: AppTextStyles.headlineSmall,
-              ),
-            ),
+            const Icon(Icons.warning_amber, color: AppColors.warning, size: 32),
+            const SizedBox(width: 12),
+            const Text('Forget WiFi?'),
           ],
         ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'This will reset your ESP32-CAM to setup mode.',
-              style: AppTextStyles.bodyMedium.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.info),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.info, color: AppColors.info, size: 20),
-                      const SizedBox(width: 8),
-                      Text('What will happen:',
-                          style: AppTextStyles.labelMedium),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '• ESP32 will forget saved WiFi\n'
-                    '• Device will restart in AP mode\n'
-                    '• You can reconnect to "RoadSafe-AI-Setup"\n'
-                    '• Configure new WiFi network',
-                    style: AppTextStyles.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.warning.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.warning),
-              ),
-              child: Row(
-                children: [
-                  const Icon(Icons.warning, color: AppColors.warning, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This will disconnect your current session',
-                      style: AppTextStyles.bodySmall.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
+        content: const Text(
+          'This will clear the saved WiFi configuration on ESP32.\n\n'
+          'You will need to reconfigure WiFi from the beginning.',
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
             child: const Text('Cancel'),
           ),
-          ElevatedButton.icon(
-            onPressed: () {
+          ElevatedButton(
+            onPressed: () async {
               Navigator.pop(context);
-              _performWiFiReset();
+              await _forgetWiFi();
             },
-            icon: const Icon(Icons.wifi_off),
-            label: const Text('Reset WiFi'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.warning,
-              foregroundColor: Colors.white,
+              backgroundColor: AppColors.error,
             ),
+            child: const Text('Forget WiFi'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _performWiFiReset() async {
+  Future<void> _forgetWiFi() async {
     setState(() {
       _isLoading = true;
-      _statusMessage = 'Resetting ESP32 WiFi...';
+      _statusMessage = 'Resetting WiFi configuration...';
     });
 
     try {
-      final cameraService = CameraService();
-      bool success = false;
-
-      // Try to get the stored/configured IP
-      String? targetIP =
-          _configuredIP ?? cameraService.connectedDevice?.ipAddress;
-
-      if (targetIP != null) {
-        print('🔄 Attempting reset at known IP: $targetIP');
-
-        setState(() {
-          _statusMessage = 'Sending reset to $targetIP...';
-        });
-
-        try {
-          final response = await http.post(
-            Uri.parse('http://$targetIP/reset'),
-            headers: {'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 10));
-
-          if (response.statusCode == 200) {
-            print('✅ Reset successful at $targetIP');
-            success = true;
-          }
-        } catch (e) {
-          print('⚠️ Reset failed at $targetIP: $e');
-        }
-      }
-
-      // Fallback: Try AP mode IP
-      if (!success) {
-        print('🔄 Trying ESP32 AP mode (192.168.4.1)...');
-        setState(() {
-          _statusMessage = 'Trying AP mode (192.168.4.1)...';
-        });
-
-        try {
-          final response = await http.post(
-            Uri.parse('http://192.168.4.1/reset'),
-            headers: {'Content-Type': 'application/json'},
-          ).timeout(const Duration(seconds: 10));
-
-          if (response.statusCode == 200) {
-            print('✅ Reset via AP mode successful');
-            success = true;
-          }
-        } catch (e) {
-          print('❌ AP mode reset failed: $e');
-        }
-      }
-
-      // Additional fallback: scan network for ESP32 devices and try reset on any found
-      if (!success) {
-        setState(() {
-          _statusMessage = 'Scanning local network for device...';
-        });
-
-        try {
-          final found = await CameraService().scanForDevices();
-          for (final dev in found) {
-            if (success) break;
-            final ip = dev.ipAddress;
-            setState(() {
-              _statusMessage = 'Attempting reset at $ip...';
-            });
-            try {
-              final r = await http.post(
-                Uri.parse('http://$ip/reset'),
-                headers: {'Content-Type': 'application/json'},
-              ).timeout(const Duration(seconds: 8));
-
-              if (r.statusCode == 200) {
-                print('✅ Reset successful at $ip via scan');
-                success = true;
-                break;
-              }
-            } catch (e) {
-              print('⚠️ Reset failed at $ip: $e');
-              continue;
-            }
-          }
-        } catch (e) {
-          print('⚠️ Network scan for reset failed: $e');
-        }
-      }
+      // Clear local cache
+      await CameraService().clearCachedDevice();
 
       setState(() {
+        _configuredIP = null;
+        _currentStep = 0;
         _isLoading = false;
-        _statusMessage = '';
       });
 
-      if (success) {
-        // Clear cached device info and force UI back to step 1
-        try {
-          await CameraService().clearCachedDevice();
-          CameraService().disconnect();
-          try {
-            DrowsinessDetector.setESP32IP('');
-          } catch (_) {}
-        } catch (_) {}
-
-        setState(() {
-          _configuredIP = null;
-          _currentStep = 0;
-        });
-
-        _showResetSuccessDialog();
-      } else {
-        _showError(
-          'Reset Failed',
-          'Could not reset ESP32 WiFi settings.\n\n'
-              'Please try:\n'
-              '1. Make sure ESP32 is powered on\n'
-              '2. Connect your phone to the same WiFi network\n'
-              '3. Try again, or manually restart the ESP32 device',
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('WiFi configuration cleared'),
+            backgroundColor: AppColors.success,
+          ),
         );
       }
     } catch (e) {
+      print('❌ Forget WiFi error: $e');
       setState(() {
         _isLoading = false;
-        _statusMessage = '';
       });
-      _showError('Reset Error', e.toString());
     }
-  }
-
-  void _showResetSuccessDialog() {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: Row(
-          children: [
-            const Icon(Icons.check_circle, color: AppColors.success, size: 32),
-            const SizedBox(width: 8),
-            const Text('WiFi Reset Successful'),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'ESP32 has been reset to setup mode.',
-              style: AppTextStyles.bodyLarge.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-            const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.primary.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.primary),
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      const Icon(Icons.wifi,
-                          color: AppColors.primary, size: 20),
-                      const SizedBox(width: 8),
-                      Text('Next steps:', style: AppTextStyles.labelMedium),
-                    ],
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    '1. ESP32 is now in AP mode\n'
-                    '2. Connect to "RoadSafe-AI-Setup"\n'
-                    '3. Configure WiFi in the app\n'
-                    '4. Connect to your configured device',
-                    style: AppTextStyles.bodySmall,
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-        actions: [
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              setState(() {
-                _currentStep = 0; // Go back to step 1
-                _configuredIP = null;
-              });
-            },
-            style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
-            ),
-            child: const Text('Start Over'),
-          ),
-        ],
-      ),
-    );
   }
 
   // ============================================
@@ -560,38 +636,36 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         title: Row(
           children: [
             const Icon(Icons.check_circle, color: AppColors.success, size: 32),
-            const SizedBox(width: 8),
-            Expanded(
-              child:
-                  Text('ESP32 Connected!', style: AppTextStyles.headlineMedium),
-            ),
+            const SizedBox(width: 12),
+            const Text('Setup Complete!'),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text(
-              'ESP32-CAM is ready at $ip',
-              style: AppTextStyles.bodyLarge,
-              textAlign: TextAlign.center,
-            ),
+            const Text('ESP32-CAM is ready for monitoring.'),
             const SizedBox(height: 16),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.info.withOpacity(0.1),
+                color: AppColors.success.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppColors.info),
+                border: Border.all(color: AppColors.success),
               ),
-              child: Row(
+              child: Column(
                 children: [
-                  const Icon(Icons.videocam, color: AppColors.info, size: 20),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Position the camera correctly for best results',
-                      style: AppTextStyles.bodySmall,
-                    ),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      const Text('IP Address:'),
+                      Text(
+                        ip,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontFamily: 'monospace',
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -599,16 +673,10 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           ],
         ),
         actions: [
-          TextButton(
-            onPressed: () {
-              Navigator.pop(context); // Close dialog
-              Navigator.pop(context); // Go back to home
-            },
-            child: const Text('Skip'),
-          ),
           ElevatedButton.icon(
             onPressed: () {
               Navigator.pop(context); // Close dialog
+              // Optionally navigate to camera positioning
               Navigator.push(
                 context,
                 MaterialPageRoute(
@@ -616,12 +684,12 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                 ),
               );
             },
-            icon: const Icon(Icons.videocam),
-            label: const Text('Position Camera'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
-              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
             ),
+            icon: const Icon(Icons.camera_alt),
+            label: const Text('Position Camera'),
           ),
         ],
       ),
@@ -629,25 +697,27 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
   }
 
   // ============================================
-  // HELPER METHODS
+  // ERROR DIALOG
   // ============================================
 
   void _showError(String title, String message) {
+    if (!mounted) return;
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: Row(
           children: [
             const Icon(Icons.error_outline, color: AppColors.error),
-            const SizedBox(width: 8),
-            Text(title, style: AppTextStyles.headlineSmall),
+            const SizedBox(width: 12),
+            Text(title),
           ],
         ),
-        content: Text(message, style: AppTextStyles.bodyMedium),
+        content: Text(message),
         actions: [
-          ElevatedButton(
+          TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('OK'),
+            child: const Text('Close'),
           ),
         ],
       ),
@@ -656,152 +726,94 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
   Widget _buildInstruction(String text) {
     return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Text(
-        text,
-        style: AppTextStyles.bodySmall,
-      ),
-    );
-  }
-
-  // ============================================
-  // UI BUILD METHODS
-  // ============================================
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: AppColors.background,
-      appBar: AppBar(
-        title: Text('Device Setup', style: AppTextStyles.headlineMedium),
-        backgroundColor: AppColors.primary,
-        foregroundColor: Colors.white,
-        elevation: 0,
-      ),
-      body: Stack(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Content
-          SingleChildScrollView(
-            padding: const EdgeInsets.all(24),
-            child: Column(
-              children: [
-                // Progress Indicator
-                _buildProgressIndicator(),
-                const SizedBox(height: 32),
-
-                // Current Step Content
-                if (_currentStep == 0) _buildStep1ConnectToAP(),
-                if (_currentStep == 1) _buildStep2ConfigureWiFi(),
-                if (_currentStep == 2) _buildStep3ConnectToDevice(),
-                if (_currentStep == 3) _buildStep4Complete(),
-              ],
-            ),
-          ),
-
-          // Loading Overlay
-          if (_isLoading)
-            Container(
-              color: Colors.black54,
-              child: Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const CircularProgressIndicator(
-                      color: AppColors.primary,
-                      strokeWidth: 3,
-                    ),
-                    if (_statusMessage.isNotEmpty) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        _statusMessage,
-                        style: AppTextStyles.bodyMedium.copyWith(
-                          color: Colors.white,
-                        ),
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ),
+          const Icon(Icons.check_circle, color: AppColors.success, size: 20),
+          const SizedBox(width: 8),
+          Expanded(child: Text(text, style: AppTextStyles.bodySmall)),
         ],
       ),
     );
   }
 
-  // Progress Indicator
-  Widget _buildProgressIndicator() {
-    return Row(
-      children: [
-        _buildStepCircle(1, 'Connect', _currentStep >= 0),
-        _buildProgressLine(_currentStep >= 1),
-        _buildStepCircle(2, 'Configure', _currentStep >= 1),
-        _buildProgressLine(_currentStep >= 2),
-        _buildStepCircle(3, 'Setup', _currentStep >= 2),
-        _buildProgressLine(_currentStep >= 3),
-        _buildStepCircle(4, 'Done', _currentStep >= 3),
-      ],
-    );
-  }
+  // ============================================
+  // BUILD UI
+  // ============================================
 
-  Widget _buildStepCircle(int number, String label, bool active) {
-    return Column(
-      children: [
-        Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: active ? AppColors.primary : Colors.grey[300],
-            shape: BoxShape.circle,
-          ),
-          child: Center(
-            child: active
-                ? const Icon(Icons.check, color: Colors.white, size: 20)
-                : Text(
-                    '$number',
-                    style: AppTextStyles.labelMedium.copyWith(
-                      color: Colors.grey[600],
-                    ),
-                  ),
-          ),
-        ),
-        const SizedBox(height: 4),
-        Text(
-          label,
-          style: AppTextStyles.labelSmall.copyWith(
-            color: active ? AppColors.primary : Colors.grey[600],
-            fontSize: 10,
-          ),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildProgressLine(bool active) {
-    return Expanded(
-      child: Container(
-        height: 2,
-        color: active ? AppColors.primary : Colors.grey[300],
-        margin: const EdgeInsets.only(bottom: 20),
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Device Setup'),
+        backgroundColor: AppColors.primary,
+        foregroundColor: Colors.white,
       ),
+      body: _isLoading
+          ? Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(_statusMessage),
+                ],
+              ),
+            )
+          : SingleChildScrollView(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // Progress indicator
+                  Row(
+                    children: List.generate(4, (index) {
+                      return Expanded(
+                        child: Container(
+                          margin: const EdgeInsets.symmetric(horizontal: 4),
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: index <= _currentStep
+                                ? AppColors.primary
+                                : Colors.grey.shade300,
+                            borderRadius: BorderRadius.circular(2),
+                          ),
+                        ),
+                      );
+                    }),
+                  ),
+                  const SizedBox(height: 32),
+
+                  // Current step
+                  if (_currentStep == 0) _buildStep1(),
+                  if (_currentStep == 1) _buildStep2ConfigureWiFi(),
+                  if (_currentStep == 2) _buildStep3ConnectToDevice(),
+                  if (_currentStep == 3) _buildStep4Complete(),
+                ],
+              ),
+            ),
     );
   }
 
-  // STEP 1: Connect to AP
-  Widget _buildStep1ConnectToAP() {
+  // ============================================
+  // STEP WIDGETS
+  // ============================================
+
+  Widget _buildStep1() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.wifi, size: 80, color: AppColors.primary),
+        const Icon(Icons.power, size: 80, color: AppColors.primary),
         const SizedBox(height: 24),
         Text(
-          'Step 1: Connect to ESP32',
+          'Step 1: Power On ESP32',
           style: AppTextStyles.headlineMedium,
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 16),
         Text(
-          'Connect your phone to the ESP32 WiFi network',
+          'Connect your ESP32-CAM to power',
           style:
               AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
           textAlign: TextAlign.center,
@@ -819,10 +831,11 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           ),
           child: Column(
             children: [
-              const Icon(Icons.router, color: Colors.white, size: 48),
+              const Icon(Icons.electrical_services,
+                  color: Colors.white, size: 48),
               const SizedBox(height: 16),
               Text(
-                'ESP32 WiFi Network',
+                'Connect Power',
                 style: AppTextStyles.titleMedium.copyWith(color: Colors.white),
               ),
               const SizedBox(height: 12),
@@ -834,29 +847,9 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                 ),
                 child: Column(
                   children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('SSID:', style: AppTextStyles.labelMedium),
-                        Text(esp32SSID,
-                            style: AppTextStyles.titleMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary,
-                            )),
-                      ],
-                    ),
-                    const Divider(height: 16),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('Password:', style: AppTextStyles.labelMedium),
-                        Text('12345678',
-                            style: AppTextStyles.titleMedium.copyWith(
-                              fontWeight: FontWeight.bold,
-                              color: AppColors.primary,
-                            )),
-                      ],
-                    ),
+                    _buildInstruction('Connect USB cable to ESP32-CAM'),
+                    _buildInstruction('Plug into 5V power source'),
+                    _buildInstruction('Wait for LED indicator'),
                   ],
                 ),
               ),
@@ -864,39 +857,8 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           ),
         ),
         const SizedBox(height: 32),
-        Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: AppColors.info.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: AppColors.info.withOpacity(0.3)),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Instructions:', style: AppTextStyles.labelLarge),
-              const SizedBox(height: 8),
-              _buildNumberedInstruction(1, 'Open WiFi settings on your phone'),
-              _buildNumberedInstruction(2, 'Look for "$esp32SSID" network'),
-              _buildNumberedInstruction(3, 'Connect using password: 12345678'),
-              _buildNumberedInstruction(4, 'Return to this app'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 32),
-        GradientButton(
-          onPressed: () {
-            setState(() {
-              _currentStep = 1;
-            });
-          },
-          text: 'Connected - Continue',
-          icon: Icons.arrow_forward,
-          gradientColors: AppColors.successGradient,
-        ),
-        const SizedBox(height: 16),
 
-        // NEW: WiFi Already Configured Button
+        // ✅ NEW: Quick access button for already configured devices
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
@@ -908,12 +870,12 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             children: [
               Row(
                 children: [
-                  const Icon(Icons.check_circle,
+                  const Icon(Icons.info_outline,
                       color: AppColors.success, size: 20),
                   const SizedBox(width: 8),
                   Expanded(
                     child: Text(
-                      'WiFi Already Configured?',
+                      'Already configured your device?',
                       style: AppTextStyles.labelMedium.copyWith(
                         color: AppColors.success,
                         fontWeight: FontWeight.bold,
@@ -923,22 +885,15 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
                 ],
               ),
               const SizedBox(height: 12),
-              Text(
-                'If you\'ve already configured WiFi before, skip setup and go directly to camera positioning.',
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textSecondary,
-                ),
-              ),
-              const SizedBox(height: 12),
               SizedBox(
                 width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _goToConfiguredStep,
-                  icon: const Icon(Icons.videocam),
+                child: OutlinedButton.icon(
+                  onPressed: _skipToPositioning,
+                  icon: const Icon(Icons.fast_forward),
                   label: const Text('WiFi Configured - Position Camera'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppColors.success,
-                    foregroundColor: Colors.white,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppColors.success,
+                    side: const BorderSide(color: AppColors.success),
                     padding: const EdgeInsets.symmetric(vertical: 12),
                   ),
                 ),
@@ -946,94 +901,27 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             ],
           ),
         ),
+        const SizedBox(height: 24),
+
+        GradientButton(
+          onPressed: () {
+            setState(() {
+              _currentStep = 1;
+            });
+          },
+          text: 'Next: Configure WiFi',
+          icon: Icons.arrow_forward,
+          gradientColors: AppColors.primaryGradient,
+        ),
       ],
     );
   }
 
-  Future<void> _goToConfiguredStep() async {
-    setState(() {
-      _isLoading = true;
-      _statusMessage = 'Checking for configured device...';
-    });
-
-    try {
-      final cachedIP = await CameraService().getCachedDeviceIP();
-
-      setState(() {
-        _configuredIP = cachedIP;
-        _currentStep = 2; // Show Connect/Reset step so user sees IP and reset
-        _isLoading = false;
-        _statusMessage = '';
-      });
-
-      if (cachedIP != null) {
-        try {
-          DrowsinessDetector.setESP32IP(cachedIP);
-        } catch (_) {}
-      }
-
-      // Optionally try a quick connect in background (do not auto-navigate)
-      Future(() async {
-        try {
-          final success = await CameraService().quickConnect();
-          if (success && mounted) {
-            // keep user on the Connect screen — they can press Connect
-            setState(() async {
-              _configuredIP = await CameraService().getCachedDeviceIP();
-            });
-          }
-        } catch (_) {}
-      });
-    } catch (e) {
-      setState(() {
-        _isLoading = false;
-        _statusMessage = '';
-      });
-      // Still show the connect step so user can attempt reset or manual connect
-      setState(() {
-        _currentStep = 2;
-      });
-    }
-  }
-
-  Widget _buildNumberedInstruction(int number, String text) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 24,
-            height: 24,
-            decoration: const BoxDecoration(
-              color: AppColors.primary,
-              shape: BoxShape.circle,
-            ),
-            child: Center(
-              child: Text(
-                '$number',
-                style: AppTextStyles.labelSmall.copyWith(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(text, style: AppTextStyles.bodySmall),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // STEP 2: Configure WiFi (IN APP!)
   Widget _buildStep2ConfigureWiFi() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const Icon(Icons.settings, size: 80, color: AppColors.primary),
+        const Icon(Icons.wifi, size: 80, color: AppColors.primary),
         const SizedBox(height: 24),
         Text(
           'Step 2: Configure WiFi',
@@ -1042,14 +930,14 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         ),
         const SizedBox(height: 16),
         Text(
-          'Configure your home WiFi network for the ESP32',
+          'Connect ESP32 to your WiFi network',
           style:
               AppTextStyles.bodyMedium.copyWith(color: AppColors.textSecondary),
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 32),
         Container(
-          padding: const EdgeInsets.all(16),
+          padding: const EdgeInsets.all(20),
           decoration: BoxDecoration(
             gradient: LinearGradient(
               colors: AppColors.primaryGradient,
@@ -1098,9 +986,9 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             children: [
               Text('You will need:', style: AppTextStyles.labelLarge),
               const SizedBox(height: 8),
-              _buildInstruction('✓ Your home WiFi network name (SSID)'),
-              _buildInstruction('✓ Your home WiFi password'),
-              _buildInstruction('✓ ESP32 will connect and get an IP address'),
+              _buildInstruction('Your home WiFi network name (SSID)'),
+              _buildInstruction('Your home WiFi password'),
+              _buildInstruction('ESP32 will connect and get an IP address'),
             ],
           ),
         ),
@@ -1130,7 +1018,6 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
     );
   }
 
-  // STEP 3: Connect to Device (Direct IP - No Scanning!)
   Widget _buildStep3ConnectToDevice() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1222,6 +1109,20 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           icon: Icons.link,
           gradientColors: AppColors.successGradient,
         ),
+
+        // ✅ NEW: Manual IP Button
+        const SizedBox(height: 12),
+        OutlinedButton.icon(
+          onPressed: _showManualIPDialog,
+          icon: const Icon(Icons.edit_location_alt),
+          label: const Text('Enter IP Manually'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: AppColors.primary,
+            side: const BorderSide(color: AppColors.primary),
+            padding: const EdgeInsets.symmetric(vertical: 16),
+          ),
+        ),
+
         const SizedBox(height: 32),
         // Forget WiFi Section
         Container(
@@ -1277,7 +1178,6 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
     );
   }
 
-  // STEP 4: Complete
   Widget _buildStep4Complete() {
     return Column(
       children: [
