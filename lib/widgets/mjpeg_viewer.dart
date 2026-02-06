@@ -30,9 +30,30 @@ class MjpegViewerState extends State<MjpegViewer> {
   StreamSubscription? _streamSubscription;
   http.Client? _httpClient;
   bool _isDisposed = false;
+  bool _isPaused = false;
 
   // Public getter for current frame (used by live_camera_page for detection)
   Uint8List? get currentFrame => _currentFrame;
+
+  /// Whether the stream is currently paused (e.g., during alarm)
+  bool get isPaused => _isPaused;
+
+  /// Stop the stream programmatically (e.g., when drowsiness alarm triggers)
+  void stopStream() {
+    _isPaused = true;
+    _stopStream();
+    if (mounted) {
+      setState(() {});
+    }
+  }
+
+  /// Restart the stream after it was paused (e.g., after alarm is dismissed)
+  void restartStream() {
+    _isPaused = false;
+    _error = null;
+    _currentFrame = null;
+    _startStream();
+  }
 
   @override
   void initState() {
@@ -241,6 +262,34 @@ class MjpegViewerState extends State<MjpegViewer> {
                 fontSize: 10,
               ),
               textAlign: TextAlign.center,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Paused state (alarm active — stream intentionally stopped)
+    if (_isPaused) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.warning_rounded,
+                size: 80, color: Colors.redAccent),
+            const SizedBox(height: 16),
+            Text(
+              'Stream Paused',
+              style: AppTextStyles.headlineSmall.copyWith(color: Colors.white),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Drowsiness alert active',
+              style: AppTextStyles.bodyMedium.copyWith(color: Colors.white70),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '🔊 Buzzer sounding on ESP32',
+              style: AppTextStyles.bodySmall.copyWith(color: Colors.redAccent),
             ),
           ],
         ),

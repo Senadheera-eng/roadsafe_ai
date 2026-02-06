@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../services/camera_service.dart';
 import '../services/drowsiness_service.dart';
+import '../services/data_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/mjpeg_viewer.dart';
@@ -21,6 +22,7 @@ class LiveCameraPage extends StatefulWidget {
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
   final CameraService _cameraService = CameraService();
+  final DataService _dataService = DataService();
   final GlobalKey<MjpegViewerState> _mjpegKey = GlobalKey<MjpegViewerState>();
 
   bool _isConnected = false;
@@ -196,15 +198,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       bool connected = await _cameraService.quickConnect();
 
       if (connected) {
-        final ip = _cameraService.connectedDevice?.ipAddress;
         setState(() {
           _isConnected = true;
-          _currentDeviceIP = ip;
+          _currentDeviceIP = _cameraService.connectedDevice?.ipAddress;
         });
-        // Sync ESP32 IP to DrowsinessDetector so buzzer commands can reach the device
-        if (ip != null) {
-          DrowsinessDetector.setESP32IP(ip);
-        }
         _showMessage('Connected to ESP32-CAM', AppColors.success);
       } else {
         await _scanForDevices();
@@ -230,13 +227,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         bool connected = await _cameraService.connectToDevice(devices.first);
 
         if (connected) {
-          final ip = devices.first.ipAddress;
           setState(() {
             _isConnected = true;
-            _currentDeviceIP = ip;
+            _currentDeviceIP = devices.first.ipAddress;
           });
-          // Sync ESP32 IP to DrowsinessDetector so buzzer commands can reach the device
-          DrowsinessDetector.setESP32IP(ip);
           _showMessage('Connected to ESP32-CAM', AppColors.success);
         }
       } else {
@@ -251,10 +245,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     }
   }
 
-  Future<void> _disconnect() async {
-    await _stopMonitoring();
+  void _disconnect() {
+    _stopMonitoring();
     _cameraService.disconnect();
-    DrowsinessDetector.setESP32IP('');
     setState(() {
       _isConnected = false;
       _currentDeviceIP = null;
@@ -280,6 +273,15 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _consecutiveClosedFrames = 0;
     });
 
+    // Auto-start a trip session for analytics tracking
+    if (!_dataService.hasActiveSession) {
+      _dataService.startSession(startLocation: 'Monitoring Session').then((_) {
+        print('📊 Trip session auto-started for analytics');
+      }).catchError((e) {
+        print('⚠️ Could not auto-start trip session: $e');
+      });
+    }
+
     _showMessage('Monitoring started', AppColors.success);
 
     _detectionTimer = Timer.periodic(
@@ -288,11 +290,32 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     );
   }
 
-  Future<void> _stopMonitoring() async {
+  void _stopMonitoring() {
     _detectionTimer?.cancel();
 
-    await DrowsinessDetector.stopContinuousVibration();
-    await _triggerESP32Alarm(false);
+    // If stream was paused due to alarm, send ALARM_OFF and restart stream
+    final wasAlerting = _isAlerting;
+    DrowsinessDetector.stopContinuousVibration();
+    _triggerESP32Alarm(false);
+
+    if (wasAlerting) {
+      // Wait for ESP32 to process ALARM_OFF, then restart stream
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _mjpegKey.currentState?.restartStream();
+        print('📹 Stream restarted after stopping monitoring');
+      });
+    }
+
+    // Auto-end the trip session for analytics
+    if (_dataService.hasActiveSession) {
+      _dataService.endSession(endLocation: 'Session Ended').then((_) {
+        print('📊 Trip session auto-ended for analytics');
+      }).catchError((e) {
+        print('⚠️ Could not auto-end trip session: $e');
+      });
+    }
+
+    final savedDetectionCount = _detectionCount;
 
     setState(() {
       _isMonitoring = false;
@@ -301,13 +324,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _isAlerting = false;
     });
 
-    if (_detectionCount > 0) {
+    if (savedDetectionCount > 0) {
       _showSessionSummary();
     }
   }
 
   Future<void> _performDetection() async {
-    if (!_isConnected || !_isMonitoring) return;
+    if (!_isConnected || !_isMonitoring || _isAlerting) return;
 
     try {
       final currentFrame = _mjpegKey.currentState?.currentFrame;
@@ -377,12 +400,39 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     print('🚨 ========================================');
     print('');
 
+    // Record alert to the active trip session for analytics
+    if (_dataService.hasActiveSession) {
+      final alertType =
+          _lastDetection?.hasYawn == true ? 'Yawn Detected' : 'Eyes Closed';
+      final alert = AlertEvent(
+        time: DateTime.now(),
+        type: alertType,
+        confidence: _lastDetection?.confidence,
+        eyeOpenPercentage: _lastDetection?.eyeOpenPercentage,
+        details: 'Consecutive drowsy frames: $_consecutiveClosedFrames',
+      );
+      _dataService.addAlertToActiveSession(alert);
+      print('📊 Alert recorded to trip session: $alertType');
+    }
+
     // FIX: Start animation immediately (non-blocking)
     _alertController.forward().then((_) {
       _alertController.reverse();
     });
 
-    // FIX: Start vibration and ESP32 alarm in parallel, then show dialog
+    // STEP 1: Stop detection timer — no more API calls while alerting
+    _detectionTimer?.cancel();
+    print('   ⏱️ Detection timer stopped');
+
+    // STEP 2: Stop the MJPEG stream BEFORE sending ALARM_ON to ESP32
+    // This closes the HTTP connection, freeing ESP32's stream handler & GPIO
+    _mjpegKey.currentState?.stopStream();
+    print('   📹 MJPEG stream stopped on app side');
+
+    // Brief delay to let ESP32 detect the closed connection
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // STEP 3: Start vibration and ESP32 alarm in parallel, then show dialog
     try {
       print('📳 Starting phone vibration...');
       final vibrationFuture = DrowsinessDetector.startContinuousVibration();
@@ -531,6 +581,14 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   await _triggerESP32Alarm(false);
                   print('   ✓ ESP32 buzzer stopped');
 
+                  // Wait for ESP32 to process ALARM_OFF and re-enable stream
+                  await Future.delayed(const Duration(milliseconds: 500));
+
+                  // Restart the MJPEG stream
+                  print('   📹 Restarting MJPEG stream...');
+                  _mjpegKey.currentState?.restartStream();
+                  print('   ✓ MJPEG stream restarted');
+
                   print('✅ All alerts dismissed');
                   print('✅ ========================================');
                   print('');
@@ -543,7 +601,16 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     _consecutiveClosedFrames = 0;
                   });
 
-                  print('📊 Alert state reset\n');
+                  // Restart detection timer for continued monitoring
+                  if (_isMonitoring) {
+                    _detectionTimer = Timer.periodic(
+                      const Duration(milliseconds: 1500),
+                      (timer) => _performDetection(),
+                    );
+                    print('   ⏱️ Detection timer restarted');
+                  }
+
+                  print('📊 Alert state reset — monitoring resumed\n');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,

@@ -12,6 +12,8 @@ class AlertEvent {
   final String type; // 'Eyes Closed', 'Yawn Detected', 'Head Nodding'
   final double? confidence;
   final String? details;
+  final int? durationSeconds; // How long drowsiness lasted before dismissal
+  final double? eyeOpenPercentage; // Eye open % at time of alert
 
   AlertEvent({
     String? id,
@@ -19,6 +21,8 @@ class AlertEvent {
     required this.type,
     this.confidence,
     this.details,
+    this.durationSeconds,
+    this.eyeOpenPercentage,
   }) : id = id ?? DateTime.now().millisecondsSinceEpoch.toString();
 
   Map<String, dynamic> toJson() => {
@@ -27,6 +31,8 @@ class AlertEvent {
         'type': type,
         'confidence': confidence,
         'details': details,
+        'durationSeconds': durationSeconds,
+        'eyeOpenPercentage': eyeOpenPercentage,
       };
 
   factory AlertEvent.fromJson(Map<String, dynamic> json) => AlertEvent(
@@ -35,6 +41,8 @@ class AlertEvent {
         type: json['type'],
         confidence: json['confidence']?.toDouble(),
         details: json['details'],
+        durationSeconds: json['durationSeconds'],
+        eyeOpenPercentage: json['eyeOpenPercentage']?.toDouble(),
       );
 }
 
@@ -105,6 +113,51 @@ class DrivingSession {
     if (safetyScore >= 60) return 'Fair';
     if (safetyScore >= 40) return 'Poor';
     return 'Critical';
+  }
+
+  /// Longest continuous driving time without any alert
+  Duration get longestAlertFreeStretch {
+    if (alerts.isEmpty) return duration;
+    final sortedAlerts = List<AlertEvent>.from(alerts)
+      ..sort((a, b) => a.time.compareTo(b.time));
+
+    Duration longest = sortedAlerts.first.time.difference(startTime);
+
+    for (int i = 1; i < sortedAlerts.length; i++) {
+      final gap = sortedAlerts[i].time.difference(sortedAlerts[i - 1].time);
+      if (gap > longest) longest = gap;
+    }
+
+    // Also check gap from last alert to session end
+    final endRef = endTime ?? DateTime.now();
+    final lastGap = endRef.difference(sortedAlerts.last.time);
+    if (lastGap > longest) longest = lastGap;
+
+    return longest;
+  }
+
+  /// Number of "Eyes Closed" type alerts
+  int get eyesClosedCount => alerts
+      .where((a) =>
+          a.type.toLowerCase().contains('closed') ||
+          a.type.toLowerCase().contains('eye'))
+      .length;
+
+  /// Number of "Yawn" type alerts
+  int get yawnCount =>
+      alerts.where((a) => a.type.toLowerCase().contains('yawn')).length;
+
+  /// Average time between consecutive alerts (returns null if < 2 alerts)
+  Duration? get averageTimeBetweenAlerts {
+    if (alerts.length < 2) return null;
+    final sortedAlerts = List<AlertEvent>.from(alerts)
+      ..sort((a, b) => a.time.compareTo(b.time));
+    int totalSeconds = 0;
+    for (int i = 1; i < sortedAlerts.length; i++) {
+      totalSeconds +=
+          sortedAlerts[i].time.difference(sortedAlerts[i - 1].time).inSeconds;
+    }
+    return Duration(seconds: totalSeconds ~/ (sortedAlerts.length - 1));
   }
 
   Map<String, dynamic> toJson() => {
