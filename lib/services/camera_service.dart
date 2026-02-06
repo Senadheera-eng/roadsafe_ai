@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:network_info_plus/network_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'drowsiness_service.dart';
 
 class ESP32Device {
   final String ipAddress;
@@ -92,6 +93,9 @@ class CameraService {
 
   Future<void> setDiscoveredIP(String ip) async {
     await _cacheDeviceIP(ip);
+
+    // Notify drowsiness service of the ESP32 IP so it can trigger the buzzer
+    DrowsinessDetector.setESP32IP(ip);
 
     final device = ESP32Device(
       ipAddress: ip,
@@ -375,6 +379,12 @@ class CameraService {
         }
 
         _connectedDevice = device.copyWith(isConnected: true);
+        // Ensure drowsiness service knows which ESP32 to call for buzzer
+        try {
+          DrowsinessDetector.setESP32IP(device.ipAddress);
+        } catch (e) {
+          print('⚠️ Failed to set ESP32 IP in DrowsinessDetector: $e');
+        }
         await _cacheDeviceIP(device.ipAddress);
         _connectionController.add(true);
         print('✅ Successfully connected to ESP32-CAM!');
@@ -391,6 +401,12 @@ class CameraService {
 
   void disconnect() {
     _connectedDevice = null;
+    // Clear ESP32 IP in drowsiness service
+    try {
+      DrowsinessDetector.setESP32IP(null);
+    } catch (e) {
+      print('⚠️ Failed to clear ESP32 IP in DrowsinessDetector: $e');
+    }
     _connectionController.add(false);
     _stopPeriodicScan();
     print('🔌 Disconnected from ESP32-CAM');

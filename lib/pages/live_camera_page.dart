@@ -282,8 +282,8 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   void _stopMonitoring() {
     _detectionTimer?.cancel();
 
-    DrowsinessDetector.stopContinuousVibration();
-    _triggerESP32Alarm(false);
+    // Stop vibration and ESP32 buzzer (fire-and-forget to avoid awaiting in dispose)
+    DrowsinessDetector.stopDrowsinessAlert();
 
     setState(() {
       _isMonitoring = false;
@@ -373,33 +373,23 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _alertController.reverse();
     });
 
-    // FIX: Start vibration and ESP32 alarm in parallel, then show dialog
+    // Start vibration and ESP32 alarm (use DrowsinessDetector for ESP32)
     try {
       print('📳 Starting phone vibration...');
       final vibrationFuture = DrowsinessDetector.startContinuousVibration();
 
-      print('🔔 Triggering ESP32 buzzer...');
-      final esp32Future = _triggerESP32Alarm(true);
+      print('🔔 Triggering ESP32 buzzer via DrowsinessDetector...');
+      final esp32Future = DrowsinessDetector.startESP32Alarm();
 
-      // Wait for BOTH to complete before showing dialog
-      await Future.wait([
-        vibrationFuture,
-        esp32Future,
-      ], eagerError: false);
+      // Wait for both to start (non-fatal)
+      await Future.wait([vibrationFuture, esp32Future], eagerError: false);
 
-      print('✅ Both alerts started successfully');
-      print('');
+      print('✅ Both alerts started (or attempted)');
 
-      // NOW show the dialog after alerts are active
-      if (mounted) {
-        _showAlertDialog();
-      }
+      if (mounted) _showAlertDialog();
     } catch (e) {
       print('❌ Alert trigger error: $e');
-      // Still show dialog even if there's an error
-      if (mounted) {
-        _showAlertDialog();
-      }
+      if (mounted) _showAlertDialog();
     }
   }
 
@@ -514,13 +504,9 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   print('✅ USER PRESSED "I\'M AWAKE"');
                   print('✅ ========================================');
 
-                  print('   Stopping phone vibration...');
-                  await DrowsinessDetector.stopContinuousVibration();
-                  print('   ✓ Phone vibration stopped');
-
-                  print('   Stopping ESP32 buzzer...');
-                  await _triggerESP32Alarm(false);
-                  print('   ✓ ESP32 buzzer stopped');
+                  print('   Stopping phone vibration and ESP32 buzzer...');
+                  await DrowsinessDetector.stopDrowsinessAlert();
+                  print('   ✓ Alerts stopped');
 
                   print('✅ All alerts dismissed');
                   print('✅ ========================================');
