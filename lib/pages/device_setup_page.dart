@@ -32,8 +32,12 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
   @override
   void dispose() {
+    _manualIPController.dispose();
     super.dispose();
   }
+
+  // Controller for manual IP entry
+  final TextEditingController _manualIPController = TextEditingController();
 
   // ============================================
   // SKIP TO POSITIONING (WiFi Already Configured)
@@ -226,6 +230,50 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
             '• ESP32 successfully connected to WiFi\n\n'
             'Error: $e',
       );
+    }
+  }
+
+  // Connect using a manually entered IP address
+  Future<void> _connectToManualIP() async {
+    final manualIP = _manualIPController.text.trim();
+    if (manualIP.isEmpty) {
+      _showError('No IP Entered', 'Please enter the device IP address.');
+      return;
+    }
+
+    setState(() {
+      _isLoading = true;
+      _statusMessage = 'Connecting to ESP32 at $manualIP...';
+    });
+
+    try {
+      final device = ESP32Device(
+        ipAddress: manualIP,
+        deviceName: 'RoadSafe AI - ESP32-CAM',
+        isConnected: false,
+      );
+
+      final success = await CameraService().connectToDevice(device);
+
+      setState(() {
+        _isLoading = false;
+      });
+
+      if (success) {
+        setState(() {
+          _configuredIP = manualIP;
+          _currentStep = 3;
+        });
+        _showSuccessAndFinish(manualIP);
+      } else {
+        throw Exception('Connection failed');
+      }
+    } catch (e) {
+      setState(() {
+        _isLoading = false;
+      });
+      _showError('Connection Failed',
+          'Cannot connect to ESP32 at $manualIP\n\nError: $e');
     }
   }
 
