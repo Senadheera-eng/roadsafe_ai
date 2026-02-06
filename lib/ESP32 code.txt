@@ -31,7 +31,7 @@
 
 // ======================== WiFi Configuration ========================
 #define AP_SSID "RoadSafe-AI-Setup"
-#define AP_PASSWORD "12345678"
+#define AP_PASSWORD "1234567800"
 #define WIFI_TIMEOUT 30000
 
 // ======================== UDP DISCOVERY ========================
@@ -307,20 +307,13 @@ const char camera_html[] PROGMEM = R"rawliteral(
 
 static esp_err_t scan_handler(httpd_req_t *req) {
     set_cors_headers(req);
-
     int n = WiFi.scanNetworks();
-
     String json = "{\"networks\":[";
     for (int i = 0; i < n; i++) {
         if (i > 0) json += ",";
-        json += "{";
-        json += "\"ssid\":\"" + WiFi.SSID(i) + "\",";
-        json += "\"rssi\":" + String(WiFi.RSSI(i)) + ",";
-        json += "\"encryption\":\"" + String(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "Open" : "Secured") + "\"";
-        json += "}";
+        json += "{\"ssid\":\"" + WiFi.SSID(i) + "\",\"rssi\":" + String(WiFi.RSSI(i)) + ",\"encryption\":\"" + String(WiFi.encryptionType(i) == WIFI_AUTH_OPEN ? "Open" : "Secured") + "\"}";
     }
     json += "]}";
-
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_send(req, json.c_str(), json.length());
 }
@@ -610,7 +603,7 @@ void startCameraServer() {
     httpd_config_t config = HTTPD_DEFAULT_CONFIG();
     config.server_port = 80;
     config.ctrl_port = 32768;
-    config.max_uri_handlers = 10;
+    config.max_uri_handlers = 8;
 
     httpd_uri_t index_uri     = {"/",           HTTP_GET,  index_handler,      NULL};
     httpd_uri_t stream_uri    = {"/stream",     HTTP_GET,  stream_handler,     NULL};
@@ -618,7 +611,6 @@ void startCameraServer() {
     httpd_uri_t alarm_uri     = {"/alarm",      HTTP_POST, alarm_handler,      NULL};
     httpd_uri_t test_uri      = {"/test_alarm", HTTP_GET,  test_alarm_handler, NULL};
     httpd_uri_t status_uri    = {"/status",     HTTP_GET,  status_handler,     NULL};
-    httpd_uri_t reset_uri     = {"/reset",      HTTP_POST, reset_handler,      NULL};
 
     if (httpd_start(&camera_httpd, &config) == ESP_OK) {
         httpd_register_uri_handler(camera_httpd, &index_uri);
@@ -627,7 +619,6 @@ void startCameraServer() {
         httpd_register_uri_handler(camera_httpd, &alarm_uri);
         httpd_register_uri_handler(camera_httpd, &test_uri);
         httpd_register_uri_handler(camera_httpd, &status_uri);
-        httpd_register_uri_handler(camera_httpd, &reset_uri);
 
         Serial.println("✅ Server started:");
         Serial.println("   GET  /           → Web UI");
@@ -636,7 +627,6 @@ void startCameraServer() {
         Serial.println("   POST /alarm      → {\"command\":\"ALARM_ON\"} or {\"command\":\"ALARM_OFF\"}");
         Serial.println("   GET  /test_alarm → Test buzzer (3 beeps)");
         Serial.println("   GET  /status     → Device status JSON");
-        Serial.println("   POST /reset      → Clear WiFi & restart in AP mode");
     }
 }
 
