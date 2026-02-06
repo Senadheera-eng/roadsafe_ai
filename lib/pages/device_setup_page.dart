@@ -344,11 +344,14 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
     try {
       final cameraService = CameraService();
-      bool success = false;
+      bool esp32ResetSuccess = false;
 
       // Try to get the stored/configured IP
       String? targetIP =
           _configuredIP ?? cameraService.connectedDevice?.ipAddress;
+
+      // Also try cached IP from SharedPreferences
+      targetIP ??= await cameraService.getCachedDeviceIP();
 
       if (targetIP != null) {
         print('🔄 Attempting reset at known IP: $targetIP');
@@ -365,7 +368,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
           if (response.statusCode == 200) {
             print('✅ Reset successful at $targetIP');
-            success = true;
+            esp32ResetSuccess = true;
           }
         } catch (e) {
           print('⚠️ Reset failed at $targetIP: $e');
@@ -373,7 +376,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
       }
 
       // Fallback: Try AP mode IP
-      if (!success) {
+      if (!esp32ResetSuccess) {
         print('🔄 Trying ESP32 AP mode (192.168.4.1)...');
         setState(() {
           _statusMessage = 'Trying AP mode (192.168.4.1)...';
@@ -387,36 +390,56 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
 
           if (response.statusCode == 200) {
             print('✅ Reset via AP mode successful');
-            success = true;
+            esp32ResetSuccess = true;
           }
         } catch (e) {
           print('❌ AP mode reset failed: $e');
         }
       }
 
+      // ====================================================
+      // ALWAYS clear app-side cache regardless of ESP32 response
+      // ====================================================
       setState(() {
+        _statusMessage = 'Clearing saved credentials...';
+      });
+
+      // Clear SharedPreferences (esp32_last_ip, esp32_last_connection)
+      // and disconnect CameraService singleton
+      await cameraService.clearCachedDevice();
+      print('✅ App cache cleared (SharedPreferences + CameraService)');
+
+      // Clear local state
+      setState(() {
+        _configuredIP = null;
+        _currentStep = 0;
         _isLoading = false;
         _statusMessage = '';
       });
 
-      if (success) {
+      // Show appropriate dialog
+      if (esp32ResetSuccess) {
         _showResetSuccessDialog();
       } else {
-        _showError(
-          'Reset Failed',
-          'Could not reset ESP32 WiFi settings.\n\n'
-              'Please try:\n'
-              '1. Make sure ESP32 is powered on\n'
-              '2. Connect your phone to the same WiFi network\n'
-              '3. Try again, or manually restart the ESP32 device',
-        );
+        _showResetPartialDialog();
       }
     } catch (e) {
+      // Even on exception, clear app cache
+      try {
+        await CameraService().clearCachedDevice();
+      } catch (_) {}
+
       setState(() {
+        _configuredIP = null;
+        _currentStep = 0;
         _isLoading = false;
         _statusMessage = '';
       });
-      _showError('Reset Error', e.toString());
+      _showError(
+        'Reset Error',
+        'An error occurred: ${e.toString()}\n\n'
+            'App cache has been cleared. You can start setup again.',
+      );
     }
   }
 
@@ -429,7 +452,7 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           children: [
             const Icon(Icons.check_circle, color: AppColors.success, size: 32),
             const SizedBox(width: 8),
-            const Text('WiFi Reset Successful'),
+            const Expanded(child: Text('WiFi Reset Successful')),
           ],
         ),
         content: Column(
@@ -437,9 +460,39 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              'ESP32 has been reset to setup mode.',
+              'Both ESP32 and app credentials have been cleared.',
               style: AppTextStyles.bodyLarge.copyWith(
                 fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.success),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.check_circle,
+                          color: AppColors.success, size: 20),
+                      const SizedBox(width: 8),
+                      Text('What was cleared:',
+                          style: AppTextStyles.labelMedium),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '✓ ESP32 WiFi credentials erased\n'
+                    '✓ App saved device info cleared\n'
+                    '✓ ESP32 restarting in AP mode',
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
               ),
             ),
             const SizedBox(height: 16),
@@ -477,17 +530,110 @@ class _DeviceSetupPageState extends State<DeviceSetupPage> {
         actions: [
           ElevatedButton(
             onPressed: () {
-              Navigator.pop(context); // Close dialog
-              setState(() {
-                _currentStep = 0; // Go back to step 1
-                _configuredIP = null;
-              });
+              Navigator.pop(context); // Close dialog — already on Step 1
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.primary,
               foregroundColor: Colors.white,
             ),
-            child: const Text('Start Over'),
+            child: const Text('Start Setup'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// Shown when the ESP32 could not be reached but app cache was still cleared.
+  void _showResetPartialDialog() {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.warning_rounded,
+                color: AppColors.warning, size: 32),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('Partial Reset')),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'App credentials cleared, but could not reach ESP32.',
+              style: AppTextStyles.bodyLarge.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 16),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.success.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.success),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.check_circle,
+                      color: AppColors.success, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'App saved device info cleared',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.warning.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.warning),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(Icons.info_outline,
+                          color: AppColors.warning, size: 20),
+                      const SizedBox(width: 8),
+                      Text('ESP32 may still have old WiFi:',
+                          style: AppTextStyles.labelMedium),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '• Make sure ESP32 is powered on\n'
+                    '• Press the physical reset button on ESP32\n'
+                    '• Or power-cycle the ESP32 device\n'
+                    '• Then connect to "RoadSafe-AI-Setup"',
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context); // Close dialog — already on Step 1
+            },
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+            ),
+            child: const Text('Start Setup'),
           ),
         ],
       ),
