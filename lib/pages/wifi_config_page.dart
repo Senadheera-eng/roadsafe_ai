@@ -59,30 +59,77 @@ class _WiFiConfigPageState extends State<WiFiConfigPage>
     setState(() {
       _isScanning = true;
       _networks.clear();
+      _statusMessage = '';
     });
 
-    try {
-      final response = await http
-          .get(Uri.parse('http://${widget.esp32IP}/scan'))
-          .timeout(const Duration(seconds: 30));
+    const maxRetries = 3;
 
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final List networks = data['networks'];
+    for (int attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        print('📡 Scan attempt $attempt/$maxRetries...');
 
-        setState(() {
-          _networks = networks.map((n) => WiFiNetwork.fromJson(n)).toList()
-            ..sort(
-                (a, b) => b.rssi.compareTo(a.rssi)); // Sort by signal strength
-          _isScanning = false;
-        });
-      } else {
-        throw Exception('Failed to scan');
+        final response = await http
+            .get(Uri.parse('http://${widget.esp32IP}/scan'))
+            .timeout(const Duration(seconds: 60));
+
+        if (response.statusCode == 200) {
+          final data = json.decode(response.body);
+          final List networks = data['networks'] ?? [];
+
+          if (networks.isNotEmpty) {
+            setState(() {
+              _networks = networks.map((n) => WiFiNetwork.fromJson(n)).toList()
+                ..sort((a, b) => b.rssi.compareTo(a.rssi));
+              _isScanning = false;
+              _statusMessage = '';
+            });
+            return; // ✅ Success
+          }
+
+          // Empty list — retry if attempts remain
+          if (attempt < maxRetries) {
+            print('📡 Empty scan result, retrying in 3s...');
+            if (mounted) {
+              setState(() {
+                _statusMessage =
+                    'No networks found, retrying ($attempt/$maxRetries)...';
+              });
+            }
+            await Future.delayed(const Duration(seconds: 3));
+            continue;
+          }
+        } else {
+          throw Exception('HTTP ${response.statusCode}');
+        }
+      } catch (e) {
+        print('📡 Scan attempt $attempt error: $e');
+        if (attempt < maxRetries) {
+          if (mounted) {
+            setState(() {
+              _statusMessage =
+                  'Scan failed, retrying ($attempt/$maxRetries)...';
+            });
+          }
+          await Future.delayed(const Duration(seconds: 3));
+          continue;
+        }
+        // Final failure
+        if (mounted) {
+          setState(() {
+            _isScanning = false;
+            _statusMessage = 'Could not scan WiFi networks. Make sure you are '
+                'connected to the RoadSafe-AI-Setup WiFi and tap Rescan.';
+          });
+        }
+        return;
       }
-    } catch (e) {
+    }
+
+    // All retries returned empty results
+    if (mounted) {
       setState(() {
         _isScanning = false;
-        _statusMessage = 'Failed to scan networks: $e';
+        _statusMessage = 'No WiFi networks detected. Tap Rescan to try again.';
       });
     }
   }
@@ -337,6 +384,57 @@ class _WiFiConfigPageState extends State<WiFiConfigPage>
                           ],
                         ),
                       ),
+
+                    // No networks found — empty state
+                    if (!_isScanning && _networks.isEmpty) ...[
+                      const SizedBox(height: 20),
+                      Center(
+                        child: Column(
+                          children: [
+                            Icon(
+                              Icons.wifi_off_rounded,
+                              size: 64,
+                              color: AppColors.textSecondary.withOpacity(0.5),
+                            ),
+                            const SizedBox(height: 16),
+                            Text(
+                              'No WiFi Networks Found',
+                              style: AppTextStyles.titleLarge.copyWith(
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            const SizedBox(height: 8),
+                            Padding(
+                              padding:
+                                  const EdgeInsets.symmetric(horizontal: 20),
+                              child: Text(
+                                'Make sure you\'re connected to the\n'
+                                'RoadSafe-AI-Setup network and try again.',
+                                textAlign: TextAlign.center,
+                                style: AppTextStyles.bodyMedium.copyWith(
+                                  color: AppColors.textSecondary,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(height: 24),
+                            ElevatedButton.icon(
+                              onPressed: _scanNetworks,
+                              icon: const Icon(Icons.refresh_rounded),
+                              label: const Text('Rescan Networks'),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: AppColors.primary,
+                                foregroundColor: Colors.white,
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 24, vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
 
                     // Network List
                     if (!_isScanning && _networks.isNotEmpty) ...[
