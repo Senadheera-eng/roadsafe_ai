@@ -282,8 +282,18 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   void _stopMonitoring() {
     _detectionTimer?.cancel();
 
+    // If stream was paused due to alarm, send ALARM_OFF and restart stream
+    final wasAlerting = _isAlerting;
     DrowsinessDetector.stopContinuousVibration();
     _triggerESP32Alarm(false);
+
+    if (wasAlerting) {
+      // Wait for ESP32 to process ALARM_OFF, then restart stream
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _mjpegKey.currentState?.restartStream();
+        print('📹 Stream restarted after stopping monitoring');
+      });
+    }
 
     setState(() {
       _isMonitoring = false;
@@ -298,7 +308,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
   }
 
   Future<void> _performDetection() async {
-    if (!_isConnected || !_isMonitoring) return;
+    if (!_isConnected || !_isMonitoring || _isAlerting) return;
 
     try {
       final currentFrame = _mjpegKey.currentState?.currentFrame;
@@ -373,7 +383,19 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _alertController.reverse();
     });
 
-    // FIX: Start vibration and ESP32 alarm in parallel, then show dialog
+    // STEP 1: Stop detection timer — no more API calls while alerting
+    _detectionTimer?.cancel();
+    print('   ⏱️ Detection timer stopped');
+
+    // STEP 2: Stop the MJPEG stream BEFORE sending ALARM_ON to ESP32
+    // This closes the HTTP connection, freeing ESP32's stream handler & GPIO
+    _mjpegKey.currentState?.stopStream();
+    print('   📹 MJPEG stream stopped on app side');
+
+    // Brief delay to let ESP32 detect the closed connection
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // STEP 3: Start vibration and ESP32 alarm in parallel, then show dialog
     try {
       print('📳 Starting phone vibration...');
       final vibrationFuture = DrowsinessDetector.startContinuousVibration();
@@ -522,6 +544,14 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                   await _triggerESP32Alarm(false);
                   print('   ✓ ESP32 buzzer stopped');
 
+                  // Wait for ESP32 to process ALARM_OFF and re-enable stream
+                  await Future.delayed(const Duration(milliseconds: 500));
+
+                  // Restart the MJPEG stream
+                  print('   📹 Restarting MJPEG stream...');
+                  _mjpegKey.currentState?.restartStream();
+                  print('   ✓ MJPEG stream restarted');
+
                   print('✅ All alerts dismissed');
                   print('✅ ========================================');
                   print('');
@@ -534,7 +564,16 @@ class _LiveCameraPageState extends State<LiveCameraPage>
                     _consecutiveClosedFrames = 0;
                   });
 
-                  print('📊 Alert state reset\n');
+                  // Restart detection timer for continued monitoring
+                  if (_isMonitoring) {
+                    _detectionTimer = Timer.periodic(
+                      const Duration(milliseconds: 1500),
+                      (timer) => _performDetection(),
+                    );
+                    print('   ⏱️ Detection timer restarted');
+                  }
+
+                  print('📊 Alert state reset — monitoring resumed\n');
                 },
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.white,
