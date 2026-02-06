@@ -6,6 +6,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../services/camera_service.dart';
 import '../services/drowsiness_service.dart';
+import '../services/data_service.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/mjpeg_viewer.dart';
@@ -21,6 +22,7 @@ class LiveCameraPage extends StatefulWidget {
 class _LiveCameraPageState extends State<LiveCameraPage>
     with TickerProviderStateMixin {
   final CameraService _cameraService = CameraService();
+  final DataService _dataService = DataService();
   final GlobalKey<MjpegViewerState> _mjpegKey = GlobalKey<MjpegViewerState>();
 
   bool _isConnected = false;
@@ -271,6 +273,15 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _consecutiveClosedFrames = 0;
     });
 
+    // Auto-start a trip session for analytics tracking
+    if (!_dataService.hasActiveSession) {
+      _dataService.startSession(startLocation: 'Monitoring Session').then((_) {
+        print('📊 Trip session auto-started for analytics');
+      }).catchError((e) {
+        print('⚠️ Could not auto-start trip session: $e');
+      });
+    }
+
     _showMessage('Monitoring started', AppColors.success);
 
     _detectionTimer = Timer.periodic(
@@ -295,6 +306,17 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       });
     }
 
+    // Auto-end the trip session for analytics
+    if (_dataService.hasActiveSession) {
+      _dataService.endSession(endLocation: 'Session Ended').then((_) {
+        print('📊 Trip session auto-ended for analytics');
+      }).catchError((e) {
+        print('⚠️ Could not auto-end trip session: $e');
+      });
+    }
+
+    final savedDetectionCount = _detectionCount;
+
     setState(() {
       _isMonitoring = false;
       _sessionStartTime = null;
@@ -302,7 +324,7 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       _isAlerting = false;
     });
 
-    if (_detectionCount > 0) {
+    if (savedDetectionCount > 0) {
       _showSessionSummary();
     }
   }
@@ -377,6 +399,21 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     print('   Alert #$_alertCount');
     print('🚨 ========================================');
     print('');
+
+    // Record alert to the active trip session for analytics
+    if (_dataService.hasActiveSession) {
+      final alertType =
+          _lastDetection?.hasYawn == true ? 'Yawn Detected' : 'Eyes Closed';
+      final alert = AlertEvent(
+        time: DateTime.now(),
+        type: alertType,
+        confidence: _lastDetection?.confidence,
+        eyeOpenPercentage: _lastDetection?.eyeOpenPercentage,
+        details: 'Consecutive drowsy frames: $_consecutiveClosedFrames',
+      );
+      _dataService.addAlertToActiveSession(alert);
+      print('📊 Alert recorded to trip session: $alertType');
+    }
 
     // FIX: Start animation immediately (non-blocking)
     _alertController.forward().then((_) {
