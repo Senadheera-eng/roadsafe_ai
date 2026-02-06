@@ -82,10 +82,11 @@ class DrowsinessDetector {
   static String? _esp32IP;
   static bool _esp32AlarmActive = false;
 
-  // ✅ NEW: Set ESP32 IP address
+  // Set or clear ESP32 IP address
   static void setESP32IP(String ip) {
-    _esp32IP = ip;
-    print('🔧 ESP32 IP set to: $ip');
+    _esp32IP = ip.isEmpty ? null : ip;
+    _esp32AlarmActive = false;
+    print('🔧 ESP32 IP set to: ${_esp32IP ?? "(cleared)"}');
   }
 
   static Future<DrowsinessResult?> analyzeImage(Uint8List imageBytes) async {

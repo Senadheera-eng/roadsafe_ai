@@ -196,10 +196,15 @@ class _LiveCameraPageState extends State<LiveCameraPage>
       bool connected = await _cameraService.quickConnect();
 
       if (connected) {
+        final ip = _cameraService.connectedDevice?.ipAddress;
         setState(() {
           _isConnected = true;
-          _currentDeviceIP = _cameraService.connectedDevice?.ipAddress;
+          _currentDeviceIP = ip;
         });
+        // Sync ESP32 IP to DrowsinessDetector so buzzer commands can reach the device
+        if (ip != null) {
+          DrowsinessDetector.setESP32IP(ip);
+        }
         _showMessage('Connected to ESP32-CAM', AppColors.success);
       } else {
         await _scanForDevices();
@@ -225,10 +230,13 @@ class _LiveCameraPageState extends State<LiveCameraPage>
         bool connected = await _cameraService.connectToDevice(devices.first);
 
         if (connected) {
+          final ip = devices.first.ipAddress;
           setState(() {
             _isConnected = true;
-            _currentDeviceIP = devices.first.ipAddress;
+            _currentDeviceIP = ip;
           });
+          // Sync ESP32 IP to DrowsinessDetector so buzzer commands can reach the device
+          DrowsinessDetector.setESP32IP(ip);
           _showMessage('Connected to ESP32-CAM', AppColors.success);
         }
       } else {
@@ -243,9 +251,10 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     }
   }
 
-  void _disconnect() {
-    _stopMonitoring();
+  Future<void> _disconnect() async {
+    await _stopMonitoring();
     _cameraService.disconnect();
+    DrowsinessDetector.setESP32IP('');
     setState(() {
       _isConnected = false;
       _currentDeviceIP = null;
@@ -279,11 +288,11 @@ class _LiveCameraPageState extends State<LiveCameraPage>
     );
   }
 
-  void _stopMonitoring() {
+  Future<void> _stopMonitoring() async {
     _detectionTimer?.cancel();
 
-    DrowsinessDetector.stopContinuousVibration();
-    _triggerESP32Alarm(false);
+    await DrowsinessDetector.stopContinuousVibration();
+    await _triggerESP32Alarm(false);
 
     setState(() {
       _isMonitoring = false;
