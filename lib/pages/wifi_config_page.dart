@@ -5,6 +5,7 @@ import 'dart:async';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/glass_card.dart';
+import '../services/camera_service.dart';
 
 class WiFiConfigPage extends StatefulWidget {
   final String esp32IP; // e.g., "192.168.4.1" for AP mode
@@ -113,26 +114,52 @@ class _WiFiConfigPageState extends State<WiFiConfigPage>
 
       final data = json.decode(response.body);
 
-      if (data['success'] == true) {
+      // Try to get IP from response first
+      String? newIp;
+      if (data is Map && data['ip'] != null) {
+        newIp = data['ip'].toString();
+      }
+
+      if (data['success'] == true && newIp != null) {
         setState(() {
-          _statusMessage = 'Connected! IP: ${data['ip']}';
+          _statusMessage = 'Connected! IP: $newIp';
           _connectionSuccess = true;
         });
 
         _showSnackBar('✓ WiFi configured successfully!', AppColors.success);
 
-        // Wait and go back
-        await Future.delayed(const Duration(seconds: 3));
-        if (mounted) {
-          Navigator.pop(context, data['ip']);
-        }
-      } else {
-        setState(() {
-          _statusMessage = 'Connection failed: ${data['message']}';
-          _connectionSuccess = false;
-        });
-        _showSnackBar('Failed to connect', AppColors.error);
+        // Wait and go back with IP
+        await Future.delayed(const Duration(seconds: 2));
+        if (mounted) Navigator.pop(context, newIp);
+        return;
       }
+
+      // Some ESP32 firmwares reboot the module and don't return the new IP.
+      // In that case we attempt to discover the device on the network.
+      setState(() {
+        _statusMessage = 'Searching for device on network...';
+      });
+
+      final devices = await CameraService().scanForDevices();
+      if (devices.isNotEmpty) {
+        newIp = devices.first.ipAddress;
+        setState(() {
+          _statusMessage = 'Found device at $newIp';
+          _connectionSuccess = true;
+        });
+
+        _showSnackBar('✓ WiFi configured successfully!', AppColors.success);
+        await Future.delayed(const Duration(seconds: 1));
+        if (mounted) Navigator.pop(context, newIp);
+        return;
+      }
+
+      // If we reach here, we couldn't discover the device
+      setState(() {
+        _statusMessage = 'Connection failed: ${data['message'] ?? 'Unknown'}';
+        _connectionSuccess = false;
+      });
+      _showSnackBar('Failed to connect', AppColors.error);
     } catch (e) {
       setState(() {
         _statusMessage = 'Error: $e';
