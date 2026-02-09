@@ -4,6 +4,7 @@ import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/modern_text_field.dart';
 import '../widgets/gradient_button.dart';
+import 'package:flutter_svg/flutter_svg.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({super.key});
@@ -246,10 +247,14 @@ class _LoginPageState extends State<LoginPage> with TickerProviderStateMixin {
               ),
             ],
           ),
-          child: const Icon(
-            Icons.shield_rounded,
-            color: Colors.white,
-            size: 60,
+          child: Padding(
+            padding: const EdgeInsets.all(12.0),
+            child: SvgPicture.asset(
+              'assets/logo.svg',
+              width: 60,
+              height: 60,
+              fit: BoxFit.contain,
+            ),
           ),
         ),
         const SizedBox(height: 24),

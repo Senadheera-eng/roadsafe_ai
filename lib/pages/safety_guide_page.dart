@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/glass_card.dart';
+import '../widgets/app_logo.dart';
 
 class SafetyGuidePage extends StatefulWidget {
   const SafetyGuidePage({super.key});
@@ -228,11 +229,7 @@ class _SafetyGuidePageState extends State<SafetyGuidePage>
                   color: Colors.white.withOpacity(0.2),
                   borderRadius: BorderRadius.circular(16),
                 ),
-                child: const Icon(
-                  Icons.shield_rounded,
-                  color: Colors.white,
-                  size: 28,
-                ),
+                child: const AppLogo(size: 28),
               ),
               const SizedBox(width: 16),
               Expanded(

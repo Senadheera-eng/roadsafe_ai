@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:road_safe_ai/pages/live_camera_page.dart';
+import 'package:flutter_svg/flutter_svg.dart';
+import '../widgets/app_logo.dart';
 import '../theme/app_colors.dart';
 import '../theme/app_text_styles.dart';
 import '../widgets/feature_card.dart';
@@ -268,10 +270,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         width: 1,
                                       ),
                                     ),
-                                    child: const Icon(
-                                      Icons.shield_rounded,
-                                      color: Colors.white,
-                                      size: 24,
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(6.0),
+                                      child: SvgPicture.asset(
+                                        'assets/logo.svg',
+                                        width: 24,
+                                        height: 24,
+                                        fit: BoxFit.contain,
+                                      ),
                                     ),
                                   ),
                                   const SizedBox(width: 12),
@@ -1155,11 +1161,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               ),
                               borderRadius: BorderRadius.circular(8),
                             ),
-                            child: const Icon(
-                              Icons.shield_rounded,
-                              color: Colors.white,
-                              size: 14,
-                            ),
+                            child: const AppLogo(size: 14),
                           ),
                           const SizedBox(width: 8),
                           Text(

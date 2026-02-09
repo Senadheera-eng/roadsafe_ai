@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0052CC"/>
+      <stop offset="50%" stop-color="#4338CA"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="shieldGrad" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#0066FF"/>
+      <stop offset="50%" stop-color="#6366F1"/>
+      <stop offset="100%" stop-color="#8B5CF6"/>
+    </linearGradient>
+    <radialGradient id="iris" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0%" stop-color="#00E5FF"/>
+      <stop offset="55%" stop-color="#0066FF"/>
+      <stop offset="100%" stop-color="#4338CA"/>
+    </radialGradient>
+    <linearGradient id="roadG" x1="0.5" y1="0" x2="0.5" y2="1">
+      <stop offset="0%" stop-color="#1E293B"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Background fill -->
+  <rect width="1024" height="1024" rx="220" fill="url(#bg)"/>
+
+  <!-- Inner dark area (shield shape) -->
+  <path d="M512 120 C512 120 800 220 820 250 L820 480 C820 660 700 820 512 900 C324 820 204 660 204 480 L204 250 C224 220 512 120 512 120 Z"
+        fill="#0A1628" opacity="0.88"/>
+
+  <!-- Shield border glow -->
+  <path d="M512 120 C512 120 800 220 820 250 L820 480 C820 660 700 820 512 900 C324 820 204 660 204 480 L204 250 C224 220 512 120 512 120 Z"
+        fill="none" stroke="url(#shieldGrad)" stroke-width="4" opacity="0.7"/>
+
+  <!-- Road (perspective) -->
+  <path d="M420 780 L462 520 L562 520 L604 780 Z" fill="url(#roadG)" opacity="0.85"/>
+
+  <!-- Road dashes (golden) -->
+  <rect x="502" y="545" width="20" height="44" rx="6" fill="#FFD700" opacity="0.95"/>
+  <rect x="502" y="610" width="20" height="44" rx="6" fill="#FFD700" opacity="0.85"/>
+  <rect x="502" y="675" width="20" height="44" rx="6" fill="#FFD700" opacity="0.7"/>
+  <rect x="502" y="735" width="20" height="30" rx="6" fill="#FFD700" opacity="0.5"/>
+
+  <!-- Road side lines -->
+  <line x1="448" y1="530" x2="430" y2="770" stroke="#FFFFFF" stroke-width="4" opacity="0.35"/>
+  <line x1="576" y1="530" x2="594" y2="770" stroke="#FFFFFF" stroke-width="4" opacity="0.35"/>
+
+  <!-- AI Eye - outer glow shape -->
+  <path d="M260 390 Q512 240 764 390 Q512 540 260 390 Z"
+        fill="none" stroke="#00BCD4" stroke-width="5" opacity="0.5"/>
+
+  <!-- Eye white -->
+  <path d="M290 390 Q512 265 734 390 Q512 515 290 390 Z"
+        fill="#FFFFFF" opacity="0.95"/>
+
+  <!-- Iris -->
+  <circle cx="512" cy="390" r="84" fill="url(#iris)"/>
+
+  <!-- Iris ring -->
+  <circle cx="512" cy="390" r="84" fill="none" stroke="#3B82F6" stroke-width="4" opacity="0.6"/>
+  <circle cx="512" cy="390" r="76" fill="none" stroke="#6366F1" stroke-width="1.5" opacity="0.4"/>
+
+  <!-- Pupil -->
+  <circle cx="512" cy="390" r="36" fill="#0A0E1A"/>
+
+  <!-- AI circuit in pupil -->
+  <circle cx="512" cy="390" r="28" fill="none" stroke="#00E5FF" stroke-width="1.5" opacity="0.6"/>
+  <line x1="512" y1="366" x2="512" y2="414" stroke="#00E5FF" stroke-width="1.2" opacity="0.5"/>
+  <line x1="488" y1="390" x2="536" y2="390" stroke="#00E5FF" stroke-width="1.2" opacity="0.5"/>
+  <!-- Circuit dots -->
+  <circle cx="512" cy="370" r="3" fill="#00E5FF" opacity="0.9"/>
+  <circle cx="512" cy="410" r="3" fill="#00E5FF" opacity="0.9"/>
+  <circle cx="492" cy="390" r="3" fill="#00E5FF" opacity="0.9"/>
+  <circle cx="532" cy="390" r="3" fill="#00E5FF" opacity="0.9"/>
+
+  <!-- Eye highlight -->
+  <circle cx="494" cy="372" r="14" fill="#FFFFFF" opacity="0.7"/>
+  <circle cx="526" cy="402" r="6" fill="#FFFFFF" opacity="0.4"/>
+
+  <!-- Tech corner brackets -->
+  <path d="M310 290 L310 270 L340 270" fill="none" stroke="#00BCD4" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M714 290 L714 270 L684 270" fill="none" stroke="#00BCD4" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M310 490 L310 510 L340 510" fill="none" stroke="#00BCD4" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+  <path d="M714 490 L714 510 L684 510" fill="none" stroke="#00BCD4" stroke-width="5" stroke-linecap="round" opacity="0.7"/>
+
+  <!-- Scan lines -->
+  <line x1="240" y1="390" x2="275" y2="390" stroke="#00BCD4" stroke-width="3" opacity="0.5" stroke-linecap="round"/>
+  <line x1="749" y1="390" x2="784" y2="390" stroke="#00BCD4" stroke-width="3" opacity="0.5" stroke-linecap="round"/>
+</svg>
